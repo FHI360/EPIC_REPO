@@ -1,0 +1,33 @@
+
+
+{
+    "dhis_uname": "your_username",
+    "dhis_pwd": "your_password",
+    "base_url": "https://dhis-basurl.fhi360.org/api/",
+    "program": "xrwtYQH5ZLa",
+    "programStage": "lamq32lTZfT",
+    "pageSize":10000,
+    "data_elements": [
+        {
+            "dataElement": "ljzcOuhadfl",
+            "value": "false"
+        }
+    ],
+    "filters": [
+        {
+            "dataElement": "nJqMkVKnJlQ",
+            "condition": "equals",
+            "value": "1"
+        },
+        {
+            "dataElement": "p8pGipkYPWl",
+            "condition": "equals",
+            "value": "true"
+        },
+        {
+            "dataElement": "ljzcOuhadfl",
+            "condition": "not_equal",
+            "value": "false"
+        }
+    ]
+}
