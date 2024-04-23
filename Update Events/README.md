@@ -1,4 +1,3 @@
-```
 # DHIS2 Event Processing and Posting Script
 
 This Python script is designed to pull existing DHIS2 events, add data values, then post those events back to the server to update the event.
