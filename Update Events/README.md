@@ -45,7 +45,8 @@ This script has been used when a new data element is added to a program stage. F
    - `data_elements`: define the data elements (using their uids) and the values of those data elements that you want added to the events
             `Example`: You want to set "KP_PREV value" to "Known Positive" if "What is your current HIV Status" is "Positive" 
             For the data_elements, you would look up the data element uid of "KP_PREV value" and enter that in the dataElement section. Then you would look up the option set value for Known Positive, and put that value in the value field.
-    ``` {
+    ```
+        {
             "dataElement": "KP_PREV value uid here",
             "value": "option set value for Known Positive here"
         }
@@ -53,7 +54,8 @@ This script has been used when a new data element is added to a program stage. F
    - `filters`: Define which events you want these data elements added to. There are three options for these filters - equals, not_equal, and is_null
             `Example`: You want to set "KP_PREV value" to "Known Positive" if "What is your current HIV Status" is "Positive"  
             For the filter, you would look up the data element uid of "What is your current HIV Status" and enter that in the dataElement section. Then you would look up the option set value for Positive, and put that value in the value field.
-    ``` {
+    ```
+        {
             "dataElement": "What is your current HIV Status uid here",
             "condition": "equals",
             "value": "option set value for Positive here"
