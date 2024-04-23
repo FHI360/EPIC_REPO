@@ -1,5 +1,6 @@
 ### About this repo
-This repo includes scripts developed my EpiC staff to support management of DHIS2 systems.
+This repo includes scripts developed my EpiC staff to support management of DHIS2 systems:
+1. [Update Events](Update%20Events)
 
 ### Python Installation
 
