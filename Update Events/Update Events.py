@@ -41,8 +41,8 @@ def configure_url(config):
     str: Base URL template for event fetching.
     """
     return (f"{config['base_url']}events.json?program={config['program']}&programStage={config['programStage']}"
-            "&fields=storedBy,enrollment,event,program,programStage,orgUnit,trackedEntityInstance,"
-            "occurredAt,dataValues[dataElement,value],updatedAt&pageSize={config['pageSize']}")
+        f"&fields=storedBy,enrollment,event,program,programStage,orgUnit,trackedEntityInstance,"
+        f"occurredAt,dataValues[dataElement,value],updatedAt&pageSize={config['pageSize']}")
 
 
 def fetch_events(base_url, config):
@@ -50,15 +50,18 @@ def fetch_events(base_url, config):
     Fetch all events using pagination.
     
     Args:
-    base_url (str): Base URL for fetching events, without specific page numbers.
-    config (dict): Configuration dictionary containing authentication credentials.
+    base_url (str): Base URL for fetching events, formatted to include initial query parameters except for page.
+    config (dict): Configuration dictionary containing authentication credentials and pageSize.
     
     Returns:
     list: All fetched events.
     """
     all_events = []
     page = 1
+    pageSize = config['pageSize']  # Ensure this is correctly set in the config dictionary
+
     while True:
+        # Properly include pageSize in the URL
         url = f"{base_url}&page={page}"
         try:
             logging.info(f"Fetching events from page {page}...")
@@ -66,7 +69,7 @@ def fetch_events(base_url, config):
             response.raise_for_status()
             data = response.json()
             all_events.extend(data['events'])
-            if len(data['events']) < config['pageSize']:
+            if len(data['events']) < pageSize:
                 break  # Exit loop if last page
             page += 1
         except requests.exceptions.RequestException as e:
@@ -77,21 +80,23 @@ def fetch_events(base_url, config):
     return all_events
 
 
-def process_events_with_filters(events, filters):
+
+def process_events_with_filters(events, filters, new_data_elements):
     """
-    Process events based on dynamic filtering conditions from the configuration.
+    Process and update events based on dynamic filtering conditions from the configuration and append new data elements.
     
     Args:
     events (dict): Dictionary of events fetched from DHIS2.
     filters (list): List of filter conditions specified in the config.
+    new_data_elements (list): List of new data elements to append to each event that passes the filters.
     
     Returns:
-    list: Filtered events that meet all the specified conditions.
+    list: Updated events that meet all the specified conditions.
     """
     logging.info("Processing events based on filters...")
-    filtered_events = []
+    filtered_and_updated_events = []
     
-    for event in events['events']:
+    for event in events:
         data_values = event['dataValues']
         data_elements = {dv['dataElement']: dv['value'] for dv in data_values}
         
@@ -103,10 +108,17 @@ def process_events_with_filters(events, filters):
         )
         
         if match:
-            filtered_events.append(event)
+            # Append new data elements
+            for new_element in new_data_elements:
+                event['dataValues'].append({
+                    'dataElement': new_element['dataElement'],
+                    'value': new_element['value']
+                })
+            filtered_and_updated_events.append(event)
     
-    logging.info(f"Updated {len(filtered_events)} events to match filter criteria.")
-    return filtered_events
+    logging.info(f"Updated {len(filtered_and_updated_events)} events to match filter criteria and added new data elements.")
+    return filtered_and_updated_events
+
 
 
 def post_event(event, post_url, username, password):
@@ -175,7 +187,8 @@ def main():
         events = fetch_events(url, config)
         if events:
             filters = config.get('filters', [])
-            processed_events = process_events_with_filters(events, filters)
+            new_data_elements = config.get('data_elements', [])
+            filtered_events = process_events_with_filters(events, filters, new_data_elements)
             responses = post_all_events(processed_events, post_url, config['dhis_uname'], config['dhis_pwd'])
             logging.info("Finished posting events.")
 
