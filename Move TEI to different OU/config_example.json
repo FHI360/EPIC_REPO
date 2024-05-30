@@ -1,0 +1,10 @@
+
+
+{
+    "dhis_uname": "your_username",
+    "dhis_pwd": "your_password",
+    "base_url": "https://dhis-baseurl.fhi360.org/",
+    "program": "xrwtYQH5ZLa",
+    "ou_destination":"nBJzRUYTXIJ",
+    "teis_to_move":["fyQz0HJ0q5l","k6jtKHbIRQL"]
+}
