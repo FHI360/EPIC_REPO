@@ -1,10 +1,9 @@
-# DHIS2 Event Processing and Posting Script
+# DHIS2 Move TEIs Script
 
-This Python script is designed to pull existing DHIS2 events, add data values, then post those events back to the server to update the event.
+This Python script is designed to pull existing DHIS2 TEIs, including their enrollments and events, and transfer the entire TEI to a new organization unit.
 
 ## Example use
 This script has been used when a new data element is added to a program stage. For all old events, this new data element will be blank. You can use this script to set the value of the new data element for each event that was entered prior to the data element being added. 
-
 
 ## General steps
 1. Download files
@@ -41,39 +40,20 @@ This script has been used when a new data element is added to a program stage. F
    - `dhis_uname`: Your DHIS2 username.
    - `dhis_pwd`: Your DHIS2 password.
    - `base_url`: The base URL of your DHIS2 API in this format: https://dhis-epictj.fhi360.org/api/
-   - `program`, `programStage`: The unique ID of the program and program stage you want to update the events for.
-   - `data_elements`: define the data elements (using their uids) and the values of those data elements that you want added to the events
-            `Example`: You want to set "KP_PREV value" to "Known Positive" if "What is your current HIV Status" is "Positive" 
-            For the data_elements, you would look up the data element uid of "KP_PREV value" and enter that in the dataElement section. Then you would look up the option set value for Known Positive, and put that value in the value field.
-    ```
-        {
-            "dataElement": "KP_PREV value uid here",
-            "value": "option set value for Known Positive here"
-        }
-    ```
-   - `filters`: Define which events you want these data elements added to. There are three options for these filters - equals, not_equal, and is_null
-            `Example`: You want to set "KP_PREV value" to "Known Positive" if "What is your current HIV Status" is "Positive"  
-            For the filter, you would look up the data element uid of "What is your current HIV Status" and enter that in the dataElement section. Then you would look up the option set value for Positive, and put that value in the value field.
-    ```
-        {
-            "dataElement": "What is your current HIV Status uid here",
-            "condition": "equals",
-            "value": "option set value for Positive here"
-        }
-    ```
-   - `pageSize`: Specify the number of events to fetch per page for pagination. Default is 10000
+   - `ou_destination`: The uid of the org unit that you want to move the TEIs to.
+   - `teis_to_move`: The uids of any TEIs you want to move. Keep them in this format: ["fyQz0HJ0q5l","k6jtKHbIRQL"]
 
 ## Usage
 
 Run the script from the command line:
 ```
-python "Update Events.py"
+python "move_teis.py"
 ```
 
 
 ## Troubleshooting
 
-- **Check the log output** if you encounter issues. The script logs detailed error messages that can help identify configuration mistakes or network issues.
+- **Check the log output** if you encounter issues. The script logs error messages that can help identify configuration mistakes or network issues.
 - **Ensure your `config.json` is properly formatted and all required fields are correctly filled out.**
 
 ## Contributing
