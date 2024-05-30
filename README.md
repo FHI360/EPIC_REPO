@@ -1,6 +1,7 @@
 ### About this repo
 This repo includes scripts developed my EpiC staff to support management of DHIS2 systems:
 1. [Update Events](Update%20Events)
+2. [Move TEI to different OU](Move%20TEI%20to%20different%20OU)
 
 ### Python Installation
 
