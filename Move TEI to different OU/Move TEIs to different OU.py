@@ -27,7 +27,6 @@ def main():
     dhis_uname = config["dhis_uname"]
     dhis_pwd = config["dhis_pwd"]
     base_url = config["base_url"]
-    program = config["program"]
     ou_destination = config["ou_destination"]
     teis_to_move = config["teis_to_move"]
 
