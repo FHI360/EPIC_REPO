@@ -3,7 +3,7 @@
 This Python script is designed to pull existing DHIS2 TEIs, including their enrollments and events, and transfer the entire TEI to a new organization unit.
 
 ## Example use
-This script has been used when a new data element is added to a program stage. For all old events, this new data element will be blank. You can use this script to set the value of the new data element for each event that was entered prior to the data element being added. 
+This script has been used when a user accidentally enters data at the wrong org unit, and the entire TEI and everything associated with it needs to be moved. It cannot be used if you need to move just one event, or a subset of data.
 
 ## General steps
 1. Download files
