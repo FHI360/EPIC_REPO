@@ -48,7 +48,7 @@ class Connection:
         # Initialize logger, expecting it to be passed from LogFormat
         self.logger = log if log else logzero.logger
         self.session = rq.Session()
-        self.session.auth = ('', '')
+        self.session.auth = ('aejakhegbe', '%Wekgc7345dgfgfq#')
         self.base_url = 'https://dhis-upgrade.fhi360.org/api/29/'
         self.timeout = timeout
 
@@ -1045,7 +1045,7 @@ if __name__ == "__main__":
 
     SkipCategoryMaintenance = False  # default is False (False runs the COC configurations)
     org_unit_group_ = 'TYLZ69uODNo'
-    connection_ = Connection(logger, username, password)
+    connection_ = Connection(logger)
     gen = Engine(connection_, logger, org_unit_group=org_unit_group_,
                  datasource=df, posted_file_path=post_file_path,
                  years=processing_years)
