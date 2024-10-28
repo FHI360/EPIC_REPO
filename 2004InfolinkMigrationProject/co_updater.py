@@ -1052,126 +1052,154 @@ if __name__ == "__main__":
     deletion = False
     maintenance = False  # default is False (False runs the COC configurations)
     specific_push = False
+    mode = 'import_export' #['creation', 'import_export']
     dataSetName = "Migration DataSet"  # "Migrating DataSet Default" #Migrating DataSet
     fix_errors = False  # default is False (False runs the COC configurations)
 
     if gen.ping():
         if not maintenance:
             if not specific_push:
-                unique_new_data_elements_name = df['Proposed new Data element Name'].unique()
-                all_unique_data_elements_ids_list = set(df['dataElement.id'])
-                index = 0
-                total_elements = len(all_unique_data_elements_ids_list)
-                logger.debug(
-                    f"Processing {index}/{total_elements} 0% complete")
-                unique_new_data_elements_name_list = list(unique_new_data_elements_name)
-                for new_data_element_name_filter_ in unique_new_data_elements_name_list:
-                    data_to_process_df_first_level = gen.data_to_process(new_data_element_name_filter_)
-                    unique_data_elements = data_to_process_df_first_level['dataElement.id'].unique()
+                if mode == 'creation':
+                    unique_new_data_elements_name = df['Proposed new Data element Name'].unique()
+                    all_unique_data_elements_ids_list = set(df['dataElement.id'])
+                    index = 0
+                    total_elements = len(all_unique_data_elements_ids_list)
+                    logger.debug(
+                        f"Processing {index}/{total_elements} 0% complete")
+                    unique_new_data_elements_name_list = list(unique_new_data_elements_name)
+                    for new_data_element_name_filter_ in unique_new_data_elements_name_list:
+                        data_to_process_df_first_level = gen.data_to_process(new_data_element_name_filter_)
+                        unique_data_elements = data_to_process_df_first_level['dataElement.id'].unique()
 
-                    unique_counts = {}
-                    for column in data_to_process_df_first_level.columns:
-                        if 'category Option' in column:
-                            # Check if the column contains NaN values
-                            if data_to_process_df_first_level[column].notna().all():  # Ensures the column has no NaN values
-                                # Calculate unique values using set
-                                unique_counts[column] = len(set(data_to_process_df_first_level[column]))
-                    logger.debug(unique_counts)
-                    min_unique_column = min(unique_counts, key=unique_counts.get)
-                    logger.debug(f"Filtering by column - {min_unique_column}")
-                    gen.set_filter_column(min_unique_column)
+                        unique_counts = {}
+                        for column in data_to_process_df_first_level.columns:
+                            if 'category Option' in column:
+                                # Check if the column contains NaN values
+                                if data_to_process_df_first_level[column].notna().all():  # Ensures the column has no NaN values
+                                    # Calculate unique values using set
+                                    unique_counts[column] = len(set(data_to_process_df_first_level[column]))
+                        logger.debug(unique_counts)
+                        min_unique_column = min(unique_counts, key=unique_counts.get)
+                        logger.debug(f"Filtering by column - {min_unique_column}")
+                        gen.set_filter_column(min_unique_column)
 
-                    filter_obj = data_to_process_df_first_level[f'{min_unique_column}'].unique()
-                    unique_data_elements_list = list(unique_data_elements)
-                    category_combination_ = None
-                    data_element_group_ = None
-                    data_set_ = None
-                    new_data_element_ = None
-                    filter_list = list(filter_obj)
-                    logger.debug("unique data elements list: %s", json.dumps(unique_data_elements_list))
-                    logger.debug("Filters: %s", json.dumps(filter_list))
-                    category_combination_name = None
-                    obj_checked = set()
-                    for dataElement in unique_data_elements_list:
-                        # self.logger.debug(f"{new_data_element_name_filter_} --- {dataElement}")
-                        for filter_ in filter_list:
-                            data_to_process_df = gen.data_to_process(filter_, dataElement)
-                            if data_to_process_df is not None:
-                                category_combination_name = data_to_process_df.iloc[0]['Proposed CatCombos']
-                                if category_combination_name not in obj_checked:
-                                    logger.debug(f"Processing {category_combination_name}")
-                                    category_combination_ = gen.create_check_metadata(metadata='categoryCombos',
-                                        mode='check', target_name=category_combination_name, json_obj={})
-                                    if category_combination_ is None:
+                        filter_obj = data_to_process_df_first_level[f'{min_unique_column}'].unique()
+                        unique_data_elements_list = list(unique_data_elements)
+                        category_combination_ = None
+                        data_element_group_ = None
+                        data_set_ = None
+                        new_data_element_ = None
+                        filter_list = list(filter_obj)
+                        logger.debug("unique data elements list: %s", json.dumps(unique_data_elements_list))
+                        logger.debug("Filters: %s", json.dumps(filter_list))
+                        category_combination_name = None
+                        obj_checked = set()
+
+                        for dataElement in unique_data_elements_list:
+                            # self.logger.debug(f"{new_data_element_name_filter_} --- {dataElement}")
+                            for filter_ in filter_list:
+                                data_to_process_df = gen.data_to_process(filter_, dataElement)
+                                if data_to_process_df is not None:
+                                    category_combination_name = data_to_process_df.iloc[0]['Proposed CatCombos']
+                                    if category_combination_name not in obj_checked:
+                                        logger.debug(f"Processing {category_combination_name}")
                                         category_combination_ = gen.create_check_metadata(metadata='categoryCombos',
-                                            mode='create', target_name=category_combination_name, json_obj={})
+                                            mode='check', target_name=category_combination_name, json_obj={})
+                                        if category_combination_ is None:
+                                            category_combination_ = gen.create_check_metadata(metadata='categoryCombos',
+                                                mode='create', target_name=category_combination_name, json_obj={})
 
-                                if "Data Migration Group" not in obj_checked:
-                                    logger.debug(f"Processing Data Migration Group")
-                                    data_element_group_ = gen.create_check_metadata(metadata='dataElementGroups',
-                                            mode='check', target_name="Data Migration Group", json_obj={})
-                                    if data_element_group_ is None:
+                                    if "Data Migration Group" not in obj_checked:
+                                        logger.debug(f"Processing Data Migration Group")
                                         data_element_group_ = gen.create_check_metadata(metadata='dataElementGroups',
-                                            mode='create', target_name="Data Migration Group", json_obj={})
+                                                mode='check', target_name="Data Migration Group", json_obj={})
+                                        if data_element_group_ is None:
+                                            data_element_group_ = gen.create_check_metadata(metadata='dataElementGroups',
+                                                mode='create', target_name="Data Migration Group", json_obj={})
 
-                                if dataSetName not in obj_checked:
-                                    logger.debug(f"Processing {dataSetName}")
-                                    data_set_ = gen.create_check_metadata(metadata='dataSets',
-                                        mode='check', target_name=dataSetName, json_obj={})
-                                    if data_set_ is None:
+                                    if dataSetName not in obj_checked:
+                                        logger.debug(f"Processing {dataSetName}")
                                         data_set_ = gen.create_check_metadata(metadata='dataSets',
-                                            mode='create', target_name=dataSetName,  json_obj={'name' : dataSetName})
+                                            mode='check', target_name=dataSetName, json_obj={})
+                                        if data_set_ is None:
+                                            data_set_ = gen.create_check_metadata(metadata='dataSets',
+                                                mode='create', target_name=dataSetName,  json_obj={'name' : dataSetName})
 
-                                attribute_values_json = [
-                                    {
-                                        "attribute": {
-                                            "id": "HazSRVC04rO"
+                                    attribute_values_json = [
+                                        {
+                                            "attribute": {
+                                                "id": "HazSRVC04rO"
+                                            },
+                                            "value": data_to_process_df.iloc[0]['Proposed new Data element Name']
                                         },
-                                        "value": data_to_process_df.iloc[0]['Proposed new Data element Name']
-                                    },
-                                    {
-                                        "attribute": {
-                                            "id": "I1UUL3vTmdi"
-                                        },
-                                        "value": "MER"
-                                    }
-                                ]
+                                        {
+                                            "attribute": {
+                                                "id": "I1UUL3vTmdi"
+                                            },
+                                            "value": "MER"
+                                        }
+                                    ]
 
-                                dataElementName = f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}: Continuation'
-                                if dataElementName not in obj_checked:
-                                    logger.debug(f"Processing dataElement Name")
-                                    new_data_element_ = gen.create_check_metadata(metadata='dataElements',
-                                                                              mode='check',
-                                                                              target_name=dataElementName, json_obj={})
-                                    if new_data_element_ is None:
-                                        logger.debug(f"dataElement name exists ==> {new_data_element_}")
-                                        new_data_element_ = gen.create_check_metadata(
-                                            metadata='dataElements',
-                                            mode='create',
-                                            target_name=dataElementName,
-                                            json_obj={
-                                                    "name": f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}'
-                                                           f': Continuation',
-                                                    "short_name": data_to_process_df.iloc[0]["Proposed new Data element Name"],
-                                                    "form_name": data_to_process_df.iloc[0]["Proposed new Data element Name"],
-                                                    "description": data_to_process_df.iloc[0]["Proposed new Data element Name"],
-                                                    "attribute_values": attribute_values_json,
-                                                    "category_combination": category_combination_
-                                            }
-                                        )
-                                obj_checked.update([category_combination_name, "Data Migration Group", dataSetName,
-                                                    dataElementName])
-                            gen.process_metadata(filter_,
-                                                       category_combination_,
-                                                       category_combination_name,
-                                                       new_data_element=new_data_element_,
-                                                       data_element_in_view=dataElement,
-                                                       update_specific_coc_=update_specific_coc__,
-                                                       skip_category_maintenance=SkipCategoryMaintenance)
-                        index = index + 1
-                        percentage = (index / total_elements) * 100
+                                    dataElementName = f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}: Continuation'
+                                    if dataElementName not in obj_checked:
+                                        logger.debug(f"Processing dataElement Name")
+                                        new_data_element_ = gen.create_check_metadata(metadata='dataElements',
+                                                                                  mode='check',
+                                                                                  target_name=dataElementName, json_obj={})
+                                        if new_data_element_ is None:
+                                            logger.debug(f"dataElement name exists ==> {new_data_element_}")
+                                            new_data_element_ = gen.create_check_metadata(
+                                                metadata='dataElements',
+                                                mode='create',
+                                                target_name=dataElementName,
+                                                json_obj={
+                                                        "name": f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}'
+                                                               f': Continuation',
+                                                        "short_name": data_to_process_df.iloc[0]["Proposed new Data element Name"],
+                                                        "form_name": data_to_process_df.iloc[0]["Proposed new Data element Name"],
+                                                        "description": data_to_process_df.iloc[0]["Proposed new Data element Name"],
+                                                        "attribute_values": attribute_values_json,
+                                                        "category_combination": category_combination_
+                                                }
+                                            )
+                                    obj_checked.update([category_combination_name, "Data Migration Group", dataSetName,
+                                                        dataElementName])
+                                gen.process_metadata(filter_,
+                                                           category_combination_,
+                                                           category_combination_name,
+                                                           new_data_element=new_data_element_,
+                                                           data_element_in_view=dataElement,
+                                                           update_specific_coc_=update_specific_coc__,
+                                                           skip_category_maintenance=SkipCategoryMaintenance)
+                            index = index + 1
+                            percentage = (index / total_elements) * 100
+                            logger.debug(
+                                f"Processed {index}/{total_elements} now at - {dataElement}: {percentage:.2f}% complete")
+                else:
+                    unique_cat_combos_names = df['Proposed CatCombos'].unique()
+                    index = 0
+                    total_cat_combos = len(unique_cat_combos_names)
+                    logger.debug(
+                        f"Processing {index}/{total_cat_combos} 0% complete")
+                    for category_combination_name in unique_cat_combos_names:
+                        category_combination_id = None
+                        logger.debug(f"Processing {category_combination_name}")
+                        category_combination_id = gen.create_check_metadata(metadata='categoryCombos',
+                                                                          mode='check',
+                                                                          target_name=category_combination_name,
+                                                                          json_obj={})
                         logger.debug(
-                            f"Processed {index}/{total_elements} now at - {dataElement}: {percentage:.2f}% complete")
+                            f"{category_combination_name} exists {category_combination_id} ")
+                        if category_combination_id is not None:
+                            logger.debug(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
+                            coc_data = gen.get_url_data(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
+                            logger.debug(coc_data)
+
+                    index = index + 1
+                    percentage = (index / total_cat_combos) * 100
+                    logger.debug(
+                        f"Processed {index}/{total_cat_combos} {percentage:.2f}% complete")
+
 
         else:
             if deletion:
