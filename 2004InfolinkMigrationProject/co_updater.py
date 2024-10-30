@@ -11,6 +11,11 @@ import logzero
 import os
 import numpy as np
 import re
+import pickle
+import pyAesCrypt
+import getpass
+import maskpass  # importing maskpass library
+
 
 class LogFormat:
     def __init__(self, log_file_name, destination_folder):
@@ -48,23 +53,71 @@ class Connection:
         # Initialize logger, expecting it to be passed from LogFormat
         self.logger = log if log else logzero.logger
         self.session = rq.Session()
-        self.session.auth = ('aejakhegbe', '%Wekgc7345dgfgfq#')
-        self.base_url = 'https://dhis-upgrade.fhi360.org/api/29/'
+        self.session.auth = None
+        self.base_url = None
         self.timeout = timeout
+        self.dhis_file = "dhis-credentials.dat"
+        self.decrypted = False
+
+    def setup_credentials(self):
+        if not os.path.exists(f"{self.dhis_file}.aes"):
+            # Initial file setup
+            dhis_username = input("Please enter your username: ")
+            dhis_password = input("Please enter your password: ")
+            target_url = input("Please enter URL (e.g., https://url/api/29/): ")
+            # dhis_password = getpass.getpass(prompt="Please enter your password: ")
+            # dhis_password = maskpass.askpass(prompt="Please enter your password: ", mask="*")
+            passphrase = "visit_rwanda"
+
+            # Save credentials to a file
+            credentials = [dhis_username, dhis_password, target_url]
+            print(credentials)
+            with open(self.dhis_file, "wb") as cred_file:
+                pickle.dump(credentials, cred_file)
+
+            # Encrypt the file
+            self.logger.debug("Creating Encryption File.")
+            pickle_file_enc = f"{self.dhis_file}.aes"
+            buffer_size = 64 * 1024  # 64KB buffer size
+            pyAesCrypt.encryptFile(self.dhis_file, pickle_file_enc, passphrase, buffer_size)
+
+            # Clean up original file for security
+            os.remove(self.dhis_file)
+
+            # Log and ping after encryption is complete
+            self.logger.debug("Credentials configured and encrypted.")
+            self.decrypt()
+        else:
+            self.decrypt()
+
+    def decrypt(self):
+        self.logger.debug(f"reading configurations")
+        pickle_file_enc = f"{self.dhis_file}.aes"
+        password_decrypt = "visit_rwanda"
+        pyAesCrypt.decryptFile(pickle_file_enc, f"2_{self.dhis_file}", password_decrypt)
+        credentials = pickle.load(open(f"2_{self.dhis_file}", "rb"))
+        os.remove(f"2_{self.dhis_file}")
+        self.session.auth = (credentials[0], credentials[1])
+        self.base_url = credentials[2]
+        self.decrypted = True
+        self.ping()
 
     def ping(self):
-        try:
-            r = self.session.get(f'{self.base_url}/system/ping', timeout=self.timeout)
-            r.raise_for_status()  # Raise an error for bad responses
-        except rq.RequestException as e:
-            self.logger.debug(f"[Connection] Error occurred: {e}")
-            return False
+        if not self.decrypted:
+            self.setup_credentials()
         else:
-            if r.ok:
-                return True
-            else:
-                self.logger.debug(f"[Connection] Connection could not be established. {r.text}")
+            try:
+                r = self.session.get(f'{self.base_url}/system/ping', timeout=self.timeout)
+                r.raise_for_status()  # Raise an error for bad responses
+            except rq.RequestException as e:
+                self.logger.debug(f"[Connection] Error occurred: {e}")
                 return False
+            else:
+                if r.ok:
+                    return True
+                else:
+                    self.logger.debug(f"[Connection] Connection could not be established. {r.text}")
+                    return False
 
     def get_session(self):
         return self.session  # Expose the session
@@ -102,6 +155,7 @@ class Engine:
         self.process_days = years.get('process_days', None)
         self.error_data = []
         self.months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'] #['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+        self.ping()
 
     def ping(self):
         if self.connection.ping():
@@ -186,6 +240,7 @@ class Engine:
     def create_check_metadata(self, metadata, mode, target_name, json_obj):
         if mode == 'check':
             check_exist_json = f"{self.base_url}{metadata}.json?fields=id%2Cname"
+            self.logger.debug(check_exist_json)
             check_exist_json_data = self.get_url_data(check_exist_json)
             page_count = check_exist_json_data['pager'].get('pageCount')
             for page in range(1, int(page_count) + 1):

@@ -2,3 +2,4 @@ BeforeRepoCreated/
 */config.json
 *.csv
 *.xlsx
+*.aes
