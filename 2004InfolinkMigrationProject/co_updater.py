@@ -1249,8 +1249,7 @@ if __name__ == "__main__":
                             logger.debug(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
                             coc_data = gen.get_url_data(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
                             logger.debug(coc_data)
-
-                    index = index + 1
+                            index = index + 1
                     percentage = (index / total_cat_combos) * 100
                     logger.debug(
                         f"Processed {index}/{total_cat_combos} {percentage:.2f}% complete")

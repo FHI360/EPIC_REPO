@@ -3,3 +3,5 @@ BeforeRepoCreated/
 *.csv
 *.xlsx
 *.aes
+*.DS_Store
+*.idea
