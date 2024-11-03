@@ -97,8 +97,11 @@ class Connection:
         pyAesCrypt.decryptFile(pickle_file_enc, f"2_{self.dhis_file}", password_decrypt)
         credentials = pickle.load(open(f"2_{self.dhis_file}", "rb"))
         os.remove(f"2_{self.dhis_file}")
-        self.session.auth = (credentials[0], credentials[1])
-        self.base_url = credentials[2]
+
+        source_credentials = credentials["source"]
+        self.session.auth = (source_credentials[0], source_credentials[1])
+        self.base_url = source_credentials[2]
+
         self.decrypted = True
         self.ping()
 

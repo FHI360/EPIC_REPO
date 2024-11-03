@@ -5,3 +5,4 @@ BeforeRepoCreated/
 *.aes
 *.DS_Store
 *.idea
+*/logs/*
