@@ -16,7 +16,6 @@ import pyAesCrypt
 import getpass
 import maskpass  # importing maskpass library
 
-
 class LogFormat:
     def __init__(self, log_file_name, destination_folder):
 
@@ -47,30 +46,40 @@ class LogFormat:
         # Return the global logger for use in other classes
         return logger
 
-
 class Connection:
     def __init__(self, log=None, timeout=5,):
         # Initialize logger, expecting it to be passed from LogFormat
         self.logger = log if log else logzero.logger
-        self.session = rq.Session()
-        self.session.auth = None
-        self.base_url = None
+        self.source_session = rq.Session()
+        self.destination_session = rq.Session()
+        self.source_session.auth = None
+        self.destination_session.auth = None
+        self.source_base_url = None
+        self.destination_base_url = None
         self.timeout = timeout
         self.dhis_file = "dhis-credentials.dat"
         self.decrypted = False
+        self.connection_type = None
 
     def setup_credentials(self):
         if not os.path.exists(f"{self.dhis_file}.aes"):
             # Initial file setup
-            dhis_username = input("Please enter your username: ")
-            dhis_password = input("Please enter your password: ")
-            target_url = input("Please enter URL (e.g., https://url/api/29/): ")
-            # dhis_password = getpass.getpass(prompt="Please enter your password: ")
-            # dhis_password = maskpass.askpass(prompt="Please enter your password: ", mask="*")
+            #Source credentials and target URL
+            dhis_source_username = input("Please enter your source username: ")
+            dhis_source_password = input("Please enter your source password: ")
+            source_target_url = input("Please enter URL (e.g., https://source_url/api/29/): ")
+
+            #Destination credentials and target URL
+            dhis_destination_username = input("Please enter your destination username: ")
+            dhis_destination_password = input("Please enter your destination password: ")
+            destination_target_url = input("Please enter URL (e.g., https://destination_url/api/29/): ")
             passphrase = "visit_rwanda"
 
             # Save credentials to a file
-            credentials = [dhis_username, dhis_password, target_url]
+            credentials = {
+                "source": [dhis_source_username, dhis_source_password, source_target_url],
+                "destination": [dhis_destination_username, dhis_destination_password, destination_target_url]
+            }
             print(credentials)
             with open(self.dhis_file, "wb") as cred_file:
                 pickle.dump(credentials, cred_file)
@@ -98,19 +107,31 @@ class Connection:
         credentials = pickle.load(open(f"2_{self.dhis_file}", "rb"))
         os.remove(f"2_{self.dhis_file}")
 
+        #Setting up source credentials
         source_credentials = credentials["source"]
-        self.session.auth = (source_credentials[0], source_credentials[1])
-        self.base_url = source_credentials[2]
+        self.source_session.auth = (source_credentials[0], source_credentials[1])
+        self.source_base_url = source_credentials[2]
+
+        #Setting up destination credentials
+        destination_credentials = credentials["destination"]
+        self.destination_session.auth = (destination_credentials[0], destination_credentials[1])
+        self.destination_base_url = destination_credentials[2]
 
         self.decrypted = True
-        self.ping()
+        self.ping("source")
+        self.ping("destination")
 
-    def ping(self):
+    def ping(self,connection_type):
         if not self.decrypted:
             self.setup_credentials()
         else:
+            session = self.source_session if connection_type == "source" else self.destination_session
+            base_url = self.source_base_url if connection_type == "source" else self.destination_base_url
+            base_url = base_url.replace("://", "TEMP_PLACEHOLDER").replace("//", "/").replace("TEMP_PLACEHOLDER", "://")
+            #base_url = re.sub(r"//29.*?/system", "/system", base_url)
+            print(base_url)
             try:
-                r = self.session.get(f'{self.base_url}/system/ping', timeout=self.timeout)
+                r = session.get(f'{base_url}system/ping', timeout=self.timeout)
                 r.raise_for_status()  # Raise an error for bad responses
             except rq.RequestException as e:
                 self.logger.debug(f"[Connection] Error occurred: {e}")
@@ -122,21 +143,25 @@ class Connection:
                     self.logger.debug(f"[Connection] Connection could not be established. {r.text}")
                     return False
 
-    def get_session(self):
-        return self.session  # Expose the session
+    def get_source_session(self):
+        return self.source_session  # Expose the session
 
+    def get_destination_session(self):
+        return self.destination_session
 
 class Engine:
     def __init__(self, connection=None, log=None, org_unit_group=None, datasource=None, posted_file_path=None, years=None):
         self.logger = log
-        self.session = None
+        self.source_session = None
+        self.destination_session = None
         self.connection = connection  # Dependency injection
         # Initialize DataValueProcessing and pass the logger to it
         self.DataValueProcessing = DataValueProcessing(log=self.logger)
         self.df_main = datasource
         self.df = None
         # self.session.auth = ('aejakhegbe', '%Wekgc7345dgfgfq#')
-        self.base_url = None
+        self.source_base_url = None
+        self.destination_base_url = None
         self.klass = self.__class__.__name__
         self.timeout = 240
         self.data_to_process_df = None
@@ -158,14 +183,20 @@ class Engine:
         self.process_days = years.get('process_days', None)
         self.error_data = []
         self.months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'] #['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-        self.ping()
+        self.ping_connections()
 
-    def ping(self):
-        if self.connection.ping():
-            self.logger.debug(f"[Connection] Connection established.")
-            self.base_url = self.connection.base_url
-            self.session = self.connection.get_session()  # Directly use self.connection.session
-        return self.connection.ping()
+    def ping_connections(self):
+        if self.connection.ping("source"):
+            self.logger.debug(f"[Source Connection] Connection established.")
+            self.source_base_url = self.connection.source_base_url
+            self.source_session = self.connection.get_source_session()  # Directly use self.connection.session
+            return self.connection.ping("source")
+
+        if self.connection.ping("destination"):
+            self.logger.debug("[Destination Connection] Connection established.")
+            self.destination_base_url = self.connection.destination_base_url
+            self.destination_session = self.connection.get_destination_session()
+            return self.connection.ping("destination")
 
     def process_metadata(self,
                                filter_item=None,
@@ -210,7 +241,7 @@ class Engine:
                     # Convert the filtered data to a CSV file and name it 'filter_csv.csv'
                     self.data_to_process_df.to_csv('filter_csv.csv', index=False)
 
-                    co_data = self.get_url_data(f"{self.base_url}categoryCombos/{co_id}.json")
+                    co_data = self.get_url_data(f"{self.source_base_url}categoryCombos/{co_id}.json")
                     co_data['name'] = new_name
                     co_data['displayName'] = new_name
                     # Loop through DataFrame rows once and update accordingly
@@ -240,15 +271,15 @@ class Engine:
             self.error_data = []
             self.datavalues()
 
-    def create_check_metadata(self, metadata, mode, target_name, json_obj):
+    def create_check_metadata(self, target_url, metadata, mode, target_name, json_obj):
         if mode == 'check':
-            check_exist_json = f"{self.base_url}{metadata}.json?fields=id%2Cname"
+            check_exist_json = f"{self.source_base_url}{metadata}.json?fields=id%2Cname"
             self.logger.debug(check_exist_json)
             check_exist_json_data = self.get_url_data(check_exist_json)
             page_count = check_exist_json_data['pager'].get('pageCount')
             for page in range(1, int(page_count) + 1):
                 # Construct the URL for the current page
-                page_url = f"{self.base_url}{metadata}.json?fields=id%2Cname&page={page}"
+                page_url = f"{self.source_base_url}{metadata}.json?fields=id%2Cname&page={page}"
                 check_exist_json_data = self.get_url_data(page_url)
                 # Extract categoryCombos from the current page
                 obj = check_exist_json_data.get(f'{metadata}', [])
@@ -471,7 +502,7 @@ class Engine:
 
     def get_url_data(self, url):
         try:
-            response = self.session.get(url, timeout=self.timeout)
+            response = self.source_session.get(url, timeout=self.timeout)
             data = json.loads(response.text)
             return data
         except json.JSONDecodeError as e:
@@ -495,15 +526,15 @@ class Engine:
 
         # Choose to send data or json
         if data is not None:
-            response_update = self.session.post(url=url, data=data, params=params, headers=headers)
+            response_update = self.destination_session.post(url=url, data=data, params=params, headers=headers)
         elif json is not None:
-            response_update = self.session.post(url=url, json=json, params=params, headers=headers)
+            response_update = self.destination_session.post(url=url, json=json, params=params, headers=headers)
         else:
             raise ValueError("Either 'data' or 'json' must be provided.")
         return response_update
 
     def get_uid(self):
-        get_uid_json = f"{self.base_url}system/id?limit=1"
+        get_uid_json = f"{self.base_url}system/id?limit=1" #TODO: Update the base url to either source or destination
         get_uid_json_data = self.get_url_data(get_uid_json)
         return get_uid_json_data['codes'][0]
 
@@ -935,7 +966,6 @@ class Engine:
             self.logger.debug(f"Error writing to file {self.err_file_path}: {e}")
         self.error_data = []
 
-
 class FixErrors:
     def __init__(self, cat_option="Associacao Beneficiente Crista (ABC) Angola", engine_class=None):
 
@@ -1036,8 +1066,6 @@ class FixErrors:
         if row['Property'] == "orgUnit": # for OrgUnits
             self.group_data_org_units()
 
-
-
 class DataValueProcessing:
     def __init__(self, log=None):
         self.url = None
@@ -1076,7 +1104,6 @@ class DataValueProcessing:
         # return json_data #json_list
         return json_list  # json_list
 
-
 if __name__ == "__main__":
     # Get current date and time as a string including hours, minutes, and seconds
     # Define the file path
@@ -1114,7 +1141,7 @@ if __name__ == "__main__":
     dataSetName = "Migration DataSet"  # "Migrating DataSet Default" #Migrating DataSet
     fix_errors = False  # default is False (False runs the COC configurations)
 
-    if gen.ping():
+    if gen.ping_connections():
         if not maintenance:
             if not specific_push:
                 if mode == 'creation':
@@ -1242,16 +1269,44 @@ if __name__ == "__main__":
                     for category_combination_name in unique_cat_combos_names:
                         category_combination_id = None
                         logger.debug(f"Processing {category_combination_name}")
-                        category_combination_id = gen.create_check_metadata(metadata='categoryCombos',
+                        category_combination_id = gen.create_check_metadata(target_url=gen.source_base_url, metadata='categoryCombos',
                                                                           mode='check',
                                                                           target_name=category_combination_name,
                                                                           json_obj={})
                         logger.debug(
                             f"{category_combination_name} exists {category_combination_id} ")
                         if category_combination_id is not None:
-                            logger.debug(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
-                            coc_data = gen.get_url_data(f"{gen.base_url}categoryCombos/{category_combination_id}.json")
+                            logger.debug(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json")
+                            coc_data = gen.get_url_data(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json")
+
+                            logger.debug(coc_data["id"])
+
+                            # category_combination_id = gen.create_check_metadata(target_url=gen.destination_base_url,metadata='categoryCombos',
+                            #                                                     mode='create',
+                            #                                                     target_name=category_combination_name,
+                            #                                                     json_obj={"coc_id": coc_data["id"]})
+                            del coc_data["createdBy"], coc_data["lastUpdatedBy"]
+                            del coc_data["user"], coc_data["created"]
+                            del coc_data["lastUpdated"]
+                            del coc_data["href"]
+                            #coc_data["shortName"] = category_combination_id
+
+                            data_structured = {"categoryCombos": [coc_data]}
+                            data = gen.clean_up(str(data_structured))
+                            response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data, params={'importStrategy': 'CREATE_AND_UPDATE'})
                             logger.debug(coc_data)
+                            logger.debug('++ Updating CategoryCombo ++ ')
+                            logger.debug(f"{gen.destination_base_url}metadata")
+                            logger.debug("States %s", json.dumps(response_update.status_code))
+                            logger.debug("response %s", json.dumps(response_update.text))
+                            coc_data_update = gen.get_url_data(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json?fields=categoryOptionCombos[id, name, displayShortName, displayName, displayFormName, categoryOptions, categoryCombo]")
+                            data_structured = {"categoryOptionCombos": coc_data_update["categoryOptionCombos"]}
+                            data = gen.clean_up(str(data_structured))
+                            response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data,
+                                                            params={'importStrategy': 'CREATE_AND_UPDATE'})
+                            logger.debug(data_structured)
+                            logger.debug("States %s", json.dumps(response_update.status_code))
+                            logger.debug("response %s", json.dumps(response_update.text))
                             index = index + 1
                     percentage = (index / total_cat_combos) * 100
                     logger.debug(
