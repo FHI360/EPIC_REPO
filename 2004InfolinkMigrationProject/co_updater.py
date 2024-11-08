@@ -1180,7 +1180,7 @@ if __name__ == "__main__":
     process_category_combination_maintenance = False  # default is True (True runs the CC configurations)
     process_data_values = True  # Migrate data Value after metadata functions
 
-    org_unit_group_ = 'DoVcSNLg5rm'
+    org_unit_group_ = 'DoVcSNLg5rm' # should be automated soon
     connection_ = Connection(logger)
     gen = Engine(connection_, logger, org_unit_group=org_unit_group_,
                  datasource=df, posted_file_path=post_file_path,
