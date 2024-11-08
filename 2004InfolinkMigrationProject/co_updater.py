@@ -47,7 +47,7 @@ class LogFormat:
         return logger
 
 class Connection:
-    def __init__(self, log=None, timeout=5,):
+    def __init__(self, log=None, timeout=5):
         # Initialize logger, expecting it to be passed from LogFormat
         self.logger = log if log else logzero.logger
         self.source_session = rq.Session()
@@ -62,6 +62,7 @@ class Connection:
         self.connection_type = None
 
     def setup_credentials(self):
+        passphrase = "visit_rwanda"
         if not os.path.exists(f"{self.dhis_file}.aes"):
             # Initial file setup
             #Source credentials and target URL
@@ -70,10 +71,21 @@ class Connection:
             source_target_url = input("Please enter URL (e.g., https://source_url/api/29/): ")
 
             #Destination credentials and target URL
-            dhis_destination_username = input("Please enter your destination username: ")
-            dhis_destination_password = input("Please enter your destination password: ")
-            destination_target_url = input("Please enter URL (e.g., https://destination_url/api/29/): ")
-            passphrase = "visit_rwanda"
+            def same_server_responses(res):
+                # Keep prompting until the response is valid
+                while res.lower() not in ["yes", "y", "no", "n"]:
+                    res = input("Please enter a valid response (y/n): ")
+                return res.lower() in ["yes", "y"]
+
+            same_server = input("is Source instance the same as Destination instance (y/n): ")
+            if same_server_responses(same_server):
+                dhis_destination_username = dhis_source_username
+                dhis_destination_password = dhis_source_password
+                destination_target_url = source_target_url
+            else:
+                dhis_destination_username = input("Please enter your destination username: ")
+                dhis_destination_password = input("Please enter your destination password: ")
+                destination_target_url = input("Please enter URL (e.g., https://destination_url/api/29/): ")
 
             # Save credentials to a file
             credentials = {
@@ -174,8 +186,8 @@ class Engine:
         self.org_obj = None
         self.org_unit_group = org_unit_group
         self.posted_file_path = posted_file_path
-        self.skip_category_maintenance = False
-        self.confirmation = None
+        self.process_category_combination_maintenance = True
+        self.confirmation_for_specific_coc_ = None
         self.err_file_path = 'conflicts_data.csv'
         self.years_back = years.get('dynamic_years', 0)
         self.specific_years = years.get('specific_years', None)
@@ -199,30 +211,32 @@ class Engine:
             return self.connection.ping("destination")
 
     def process_metadata(self,
-                               filter_item=None,
-                               co_id=None,
-                               new_name=None,
-                               new_data_element=None,
-                               data_element_in_view=None,
-                               update_specific_coc_=None,
-                               skip_category_maintenance=False,
-                               ):
+                         filter_item=None,
+                         co_id=None,
+                         old_cc_id=None,
+                         new_name=None,
+                         new_data_element=None,
+                         data_element_in_view=None,
+                         update_specific_coc_=None,
+                         process_category_combination_maintenance_=False,
+                         process_data_values_=True):
         self.new_data_element = new_data_element
         self.data_element_in_view = data_element_in_view
-        self.skip_category_maintenance = skip_category_maintenance
+        self.process_category_combination_maintenance = process_category_combination_maintenance_
         if self.config_metadata is not data_element_in_view:
             self.create_update_data_element_group(mode='update')
             # self.logger.debug("Updating dataset")
             self.update_dataset(self.data_element_in_view)
             self.config_metadata = data_element_in_view
+
         if update_specific_coc_ is None:
             self.data_to_process_df = self.data_to_process(filter_item, data_element_in_view)
         else:
             # Ask for user confirmation before proceeding
-            if self.confirmation is None:
-                self.confirmation = input(
+            if self.confirmation_for_specific_coc_ is None:
+                self.confirmation_for_specific_coc_ = input(
                     f"update_specific_coc_ is not None. Proceed? (yes/no): ").strip().lower()
-                if self.confirmation == 'yes':
+                if self.confirmation_for_specific_coc_ == 'yes':
                     self.set_filter_column('categoryOptionCombos.id')
                     self.data_to_process_df = self.data_to_process(update_specific_coc_, data_element_in_view)
                     self.logger.debug(self.data_to_process_df)
@@ -231,7 +245,7 @@ class Engine:
                     sys.exit()
 
         if self.data_to_process_df is not None:
-            if not self.skip_category_maintenance:
+            if self.process_category_combination_maintenance:
                 with pd.ExcelWriter("filter_xls.xlsx") as writer:
                     self.data_to_process_df.to_excel(writer, sheet_name='data_elements', index=False)
                 try:
@@ -240,47 +254,77 @@ class Engine:
                     self.logger.debug(f'self.data_to_process_df length: {len(self.data_to_process_df)} for {filter_item} in {self.data_element_in_view}')
                     # Convert the filtered data to a CSV file and name it 'filter_csv.csv'
                     self.data_to_process_df.to_csv('filter_csv.csv', index=False)
+                    if update_specific_coc_ is None:
+                        # get old categoryCombos CoCs
+                        cc_data_update_ = self.get_url_data(f"{self.source_base_url}categoryCombos/{old_cc_id}.json?"
+                                                    f"fields=categoryOptionCombos[id,name,displayShortName,"
+                                                    f"displayName,displayFormName,categoryOptions,categoryCombo]",
+                                                    connection="source")
+                        # Update the categoryCombo id for all items in coc_data_update_["categoryOptionCombos"] to co_id
+                        for combo in cc_data_update_["categoryOptionCombos"]:
+                            combo["categoryCombo"]["id"] = co_id
+                        # get now categoryCombos CoCs
+                        cc_data = self.get_url_data(f"{self.source_base_url}categoryCombos/{co_id}.json?",
+                                                    connection="source")
+                        cc_data['name'] = new_name
+                        cc_data['displayName'] = new_name
+                        cc_data['categories'] = self.update_co_categories(0)
+                        del cc_data["createdBy"], cc_data["lastUpdatedBy"]
+                        del cc_data["user"], cc_data["created"]
+                        del cc_data["lastUpdated"]
+                        del cc_data["href"]
+                        data_structured_ = {"categoryCombos": [cc_data],
+                                            "categoryOptionCombos": cc_data_update_["categoryOptionCombos"]}
+                        # data_structured_ = {"categoryOptionCombos": coc_data_update["categoryOptionCombos"]}
+                        data_ = Engine.clean_up(str(data_structured_))
+                        response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data_,
+                                                        params={'importStrategy': 'CREATE_AND_UPDATE'})
+                        self.logger.debug('++ Pushing categoryCombos and categoryOptionCombos data ++')
+                        self.logger.debug("Status code: %s", json.dumps(response_update_.status_code))
+                        self.logger.debug("Response update: %s", json.dumps(response_update_.text))
+                    else:
+                        co_data = self.get_url_data(f"{self.source_base_url}categoryCombos/{co_id}.json")
+                        co_data['name'] = new_name
+                        co_data['displayName'] = new_name
+                        # Loop through DataFrame rows once and update accordingly
+                        update_co_with_categories_counter = 0
+                        for process_index in range(len(self.data_to_process_df)):
+                            # self.logger.debug(self.data_to_process_df['categoryOptionCombos.id'].iloc[index])
+                            self.logger.debug(f"grouped data for {data_element_in_view} - index value for row : {process_index}/{len(self.data_to_process_df)}")
+                            if update_co_with_categories_counter == 0:
 
-                    co_data = self.get_url_data(f"{self.source_base_url}categoryCombos/{co_id}.json")
-                    co_data['name'] = new_name
-                    co_data['displayName'] = new_name
-                    # Loop through DataFrame rows once and update accordingly
-                    update_co_with_categories_counter = 0
-                    for process_index in range(len(self.data_to_process_df)):
-                        # self.logger.debug(self.data_to_process_df['categoryOptionCombos.id'].iloc[index])
-                        self.logger.debug(f"grouped data for {data_element_in_view} - index value for row : {process_index}/{len(self.data_to_process_df)}")
-                        if update_co_with_categories_counter == 0:
-
-                            co_data['categories'] = self.update_co_categories(process_index)
-                            co_data_structured = {"categoryCombos": [co_data],
-                                                  "categoryOptionCombos": [self.update_coc_category(co_id, process_index)]}
-                            # Increment the counter after updating the categories
-                            update_co_with_categories_counter += 1
-                        else:
-                            co_data_structured = {"categoryOptionCombos": [self.update_coc_category(co_id, process_index)]}
-                        # with open('co_coc_data.json', 'w') as json_file:
-                        #     json.dump(co_data_structured, json_file)
-                        #
-                        params = {'importStrategy': 'UPDATE'}
-                        response_update = self.post_data(url=f"{self.base_url}metadata", json=co_data_structured, params=params)
-                        self.logger.debug('++ Pushing category and COC data ++')
-                        self.logger.debug("Status code: %s", json.dumps(response_update.status_code))
-                        self.logger.debug("Response update: %s", json.dumps(response_update.text))
+                                co_data['categories'] = self.update_co_categories(process_index)
+                                co_data_structured = {"categoryCombos": [co_data],
+                                                      "categoryOptionCombos": [self.update_coc_category(co_id, process_index)]}
+                                # Increment the counter after updating the categories
+                                update_co_with_categories_counter += 1
+                            else:
+                                co_data_structured = {"categoryOptionCombos": [self.update_coc_category(co_id, process_index)]}
+                            # with open('co_coc_data.json', 'w') as json_file:
+                            #     json.dump(co_data_structured, json_file)
+                            #
+                            params = {'importStrategy': 'UPDATE'}
+                            response_update = self.post_data(url=f"{self.destination_base_url}metadata", json=co_data_structured, params=params)
+                            self.logger.debug('++ Pushing category and COC data ++')
+                            self.logger.debug("Status code: %s", json.dumps(response_update.status_code))
+                            self.logger.debug("Response update: %s", json.dumps(response_update.text))
                 except Exception as e:
                     self.logger.debug(e)
             self.error_data = []
-            self.datavalues()
+            if process_data_values_:
+                self.datavalues()
 
-    def create_check_metadata(self, target_url, metadata, mode, target_name, json_obj):
+    def create_check_metadata(self, metadata, mode, target_name, json_obj):
+        metadata_data = None
         if mode == 'check':
             check_exist_json = f"{self.source_base_url}{metadata}.json?fields=id%2Cname"
             self.logger.debug(check_exist_json)
-            check_exist_json_data = self.get_url_data(check_exist_json)
+            check_exist_json_data = self.get_url_data(check_exist_json, connection="source")
             page_count = check_exist_json_data['pager'].get('pageCount')
             for page in range(1, int(page_count) + 1):
                 # Construct the URL for the current page
                 page_url = f"{self.source_base_url}{metadata}.json?fields=id%2Cname&page={page}"
-                check_exist_json_data = self.get_url_data(page_url)
+                check_exist_json_data = self.get_url_data(page_url, connection="source")
                 # Extract categoryCombos from the current page
                 obj = check_exist_json_data.get(f'{metadata}', [])
                 # Loop through categoryCombos and check for target name
@@ -297,7 +341,7 @@ class Engine:
                         return values.get('id')
             return None
         if mode == 'create':
-            uid = self.get_uid()
+            uid = self.get_uid(self.destination_base_url)
             if metadata == 'categoryCombos':
                 metadata_data = {
                     "name": target_name,
@@ -328,8 +372,8 @@ class Engine:
                 self.data_element_group_id = uid
             if metadata == "dataSets":
                 if self.org_obj is None:
-                    org_url = f"{self.base_url}organisationUnits.json?fields=id&paging=false"
-                    org_json_data = self.get_url_data(org_url)
+                    org_url = f"{self.source_base_url}organisationUnits.json?fields=id&paging=false"
+                    org_json_data = self.get_url_data(org_url, connection="destination")
                     self.org_obj = org_json_data.get(f'organisationUnits', [])
                 metadata_data = {
                     "name": json_obj.get('name'),
@@ -382,15 +426,15 @@ class Engine:
                     }
                 }
                 self.new_data_element = uid
-            data_structured = {f"{metadata}": [metadata_data]}
-            data = Engine.clean_up(str(data_structured))
-            self.logger.debug("data_structured: ", data)
+            data_structured_ = {f"{metadata}": [metadata_data]}
+            data_ = Engine.clean_up(str(data_structured_))
+            self.logger.debug("data_structured: ", data_)
             params = {'importStrategy': 'CREATE_UPDATE'}
-            response_update = self.post_data(url=f"{self.base_url}metadata", data=data, params=params)
+            response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data_, params=params)
             self.logger.debug(f'++ Updating or creating {metadata} ++')
 
             # Assuming the response JSON is stored in a variable called response_update
-            response_data = response_update.json()  # Convert response to JSON
+            response_data = response_update_.json()  # Convert response to JSON
             # Access the value of "ignored"
             ignored_value = response_data['stats']['ignored']
             self.logger.debug(f"ignored_value - {ignored_value}")
@@ -408,8 +452,7 @@ class Engine:
                     # Recursive call with incremented attempt value to retry
                     self.create_check_metadata(metadata, mode, target_name, json_obj)
             elif ignored_value == 0:
-                self.logger.debug("States %s", json.dumps(response_update.status_code))
-                self.logger.debug("response %s", json.dumps(response_update.text))
+                self.logger.debug("response_data %s", json.dumps(response_data))
                 return uid
             else:
                 return None
@@ -496,15 +539,17 @@ class Engine:
             uid = self.data_to_process_df.loc[processed_index, col]  # Access the value in the first row
             if pd.notna(uid):  # Check if the value is not NaN
                 cat_option_combo.append({"id": co_id})
-        coc_data = self.get_url_data(f"{self.base_url}categoryOptionCombos/{uid}.json")
+        coc_data = self.get_url_data(f"{self.source_base_url}categoryOptionCombos/{uid}.json", connection="source")
         coc_data["categoryCombo"] = cat_option_combo[0]
         return coc_data  # Optionally, return the 'cat' list if needed elsewhere
 
-    def get_url_data(self, url):
+    def get_url_data(self, url, connection="source"):
+        # Select the appropriate session based on destination
+        session = self.destination_session if connection == "destination" else self.source_session
         try:
-            response = self.source_session.get(url, timeout=self.timeout)
-            data = json.loads(response.text)
-            return data
+            response = session.get(url, timeout=self.timeout)
+            data_ = json.loads(response.text)
+            return data_
         except json.JSONDecodeError as e:
             self.logger.debug(f"Failed to parse JSON from response: {e}")
             return {}  # Return empty dictionary instead of None
@@ -518,23 +563,27 @@ class Engine:
             return {}  # Return empty dictionary instead of None
 
     def post_data(self, url=None, json=None, data=None, params=None,
-                                                headers={'content-type': 'application/json'}):
+                                                headers={'content-type': 'application/json'}, connection="destination"):
 
         # Ensure the URL is provided
         if url is None:
             raise ValueError("The 'url' parameter must be provided.")
 
+        # Select the appropriate session based on destination
+        session = self.destination_session if connection == "destination" else self.source_session
+
         # Choose to send data or json
         if data is not None:
-            response_update = self.destination_session.post(url=url, data=data, params=params, headers=headers)
+            response_update_ = session.post(url=url, data=data, params=params, headers=headers)
         elif json is not None:
-            response_update = self.destination_session.post(url=url, json=json, params=params, headers=headers)
+            response_update_ = session.post(url=url, json=json, params=params, headers=headers)
         else:
             raise ValueError("Either 'data' or 'json' must be provided.")
-        return response_update
 
-    def get_uid(self):
-        get_uid_json = f"{self.base_url}system/id?limit=1" #TODO: Update the base url to either source or destination
+        return response_update_
+
+    def get_uid(self, url):
+        get_uid_json = f"{url}system/id?limit=1" #TODO: Update the base url to either source or destination
         get_uid_json_data = self.get_url_data(get_uid_json)
         return get_uid_json_data['codes'][0]
 
@@ -568,7 +617,7 @@ class Engine:
 
     def create_update_data_element_group(self, mode):
         if mode == 'update':
-            data_element_group_json = f"{self.base_url}dataElementGroups/{self.data_element_group_id}.json"
+            data_element_group_json = f"{self.destination_base_url}dataElementGroups/{self.data_element_group_id}.json"
             data_element_group_json_data = self.get_url_data(data_element_group_json)
             del data_element_group_json_data["createdBy"], data_element_group_json_data["lastUpdatedBy"]
             del data_element_group_json_data["user"], data_element_group_json_data["created"]
@@ -581,22 +630,22 @@ class Engine:
                                     "id": self.data_element_in_view
                                     }
                 data_element_group_json_data["dataElements"].append(new_element_id)
-            data_structured = {"dataElementGroups": [data_element_group_json_data]}
-            data = Engine.clean_up(str(data_structured))
-            self.logger.debug(data)
+            data_structured_ = {"dataElementGroups": [data_element_group_json_data]}
+            data_ = Engine.clean_up(str(data_structured_))
+            self.logger.debug(data_)
             params = {'importStrategy': 'UPDATE'}
-            response_update = self.post_data(url=f"{self.base_url}metadata", data=data, params=params)
+            response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data_, params=params)
             self.logger.debug('++ Updating DataElementGroups ++ ')
-            self.logger.debug("States %s", json.dumps(response_update.status_code))
-            self.logger.debug("response %s", json.dumps(response_update.text))
-            if response_update.status_code == 500:
+            self.logger.debug("States %s", json.dumps(response_update_.status_code))
+            self.logger.debug("response %s", json.dumps(response_update_.text))
+            if response_update_.status_code == 500:
                 self.logger.debug("failed to update DataElementGroups")
                 self.logger.debug(data)
                 sys.exit()
 
     def update_dataset(self, data_element_in_view):
-        dataset_json = f"{self.base_url}dataSets/{self.migration_dataset_id}.json"
-        dataset_json_data = self.get_url_data(dataset_json)
+        dataset_json = f"{self.destination_base_url}dataSets/{self.migration_dataset_id}.json"
+        dataset_json_data = self.get_url_data(dataset_json, "destination")
         filtered_elements = [element for element in dataset_json_data["dataSetElements"] if
                              element["dataElement"]["id"] == self.new_data_element]
         if len(filtered_elements) == 0:
@@ -633,19 +682,19 @@ class Engine:
         del dataset_json_data["createdBy"], dataset_json_data["lastUpdatedBy"]
         del dataset_json_data["user"], dataset_json_data["created"]
         del dataset_json_data["lastUpdated"]
-        data_structured = {"dataSets": [dataset_json_data]}
-        data = Engine.clean_up(str(data_structured))
+        data_structured_ = {"dataSets": [dataset_json_data]}
+        data_ = Engine.clean_up(str(data_structured_))
         params = {'importStrategy': 'UPDATE'}
-        response_update = self.post_data(url=f"{self.base_url}metadata", data=data, params=params)
+        response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data_, params=params)
         self.logger.debug('++ Updating Datasets ++')
-        self.logger.debug("States %s", json.dumps(response_update.status_code))
-        self.logger.debug("response %s", json.dumps(response_update.text))
-        if response_update.status_code == 500:
+        self.logger.debug("Status %s", json.dumps(response_update_.status_code))
+        self.logger.debug("response %s", json.dumps(response_update_.text))
+        if response_update_.status_code == 500:
             self.logger.debug("failed to update datasets")
             del dataset_json_data['organisationUnits']
-            data_structured = {"dataSets": [dataset_json_data]}
-            data = Engine.clean_up(str(data_structured))
-            self.logger.debug(data)
+            data_structured_ = {"dataSets": [dataset_json_data]}
+            data_ = Engine.clean_up(str(data_structured_))
+            self.logger.debug(data_)
             sys.exit()
 
     @staticmethod
@@ -672,7 +721,7 @@ class Engine:
             if self.specific_years is not None:
                 end_year = int(year)
                 if self.process_months is None:
-                    data_value_url = f"{self.base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
+                    data_value_url = f"{self.source_base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
                                      f"&startDate={year}-01-01&endDate={end_year}-12-31" \
                                      f"&dataElementGroup={self.data_element_group_id}" \
                                      f"&orgUnitGroup={self.org_unit_group}"
@@ -681,7 +730,7 @@ class Engine:
                 else:
                     for mth in self.months:
                         if self.process_days is None:
-                            data_value_url = f"{self.base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
+                            data_value_url = f"{self.source_base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
                                              f"&startDate={year}-{mth}-01" \
                                              f"&endDate={end_year}-{mth}-{self.mth_end(mth, year)}" \
                                              f"&dataElementGroup={self.data_element_group_id}" \
@@ -697,7 +746,7 @@ class Engine:
                                 potential_end_date = batch_start_datetime_object + delta
                                 new_batch_end_datetime_object = min(potential_end_date, batch_end_datetime_object)
 
-                                data_value_url = f"{self.base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
+                                data_value_url = f"{self.source_base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
                                                  f"&startDate={batch_start_datetime_object.strftime('%Y-%m-%d')}" \
                                                  f"&endDate={new_batch_end_datetime_object.strftime('%Y-%m-%d')}" \
                                                  f"&dataElementGroup={self.data_element_group_id}" \
@@ -708,7 +757,7 @@ class Engine:
             else:
                 end_year = int(year) + 3
                 if self.process_months is not None:
-                    data_value_url = f"{self.base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
+                    data_value_url = f"{self.source_base_url}dataValueSets?dataSet={self.migration_dataset_id}" \
                                      f"&startDate={year}-01-01&endDate={end_year}-12-31" \
                                      f"&dataElementGroup={self.data_element_group_id}" \
                                      f"&orgUnitGroup={self.org_unit_group}"
@@ -720,7 +769,7 @@ class Engine:
         _df = None
         data_to_get = None
         try:
-            response = self.session.get(data_value_url, timeout=600)
+            response = self.source_session.get(data_value_url, timeout=600)
             data_to_get = json.loads(response.text)
             response.close()
             self.logger.debug(f"Data pull completed... for &startDate={start_date}&endDate={end_date}")
@@ -785,15 +834,14 @@ class Engine:
                             converted_to_json = self.DataValueProcessing.get_datavalue(filter_df_batch)
 
                             # converted_to_json = DataValueProcessing.get_datavalue(after_filter_df)
-                            get_datavalue = {"dataValues": converted_to_json}
-
-                            data = Engine.clean_up(str(get_datavalue))
+                            get_data_value = {"dataValues": converted_to_json}
+                            data_ = Engine.clean_up(str(get_data_value))
                             self.logger.debug("*** data cleaned ***")
                             # self.logger.debug("======== data Before Start ========")
                             # self.logger.debug(data)
                             # self.logger.debug("======== data End Start ========")
                             r = self.post_data(
-                                url=f"{self.base_url}dataValueSets", data=data
+                                url=f"{self.destination_base_url}dataValueSets", data=data_
                             )
                             d = r.json()
                             # Extract conflicts object directly
@@ -825,8 +873,7 @@ class Engine:
                             # Step 3: Append the same message to the file
                             with open(self.posted_file_path, 'a') as file:
                                 file.write(log_message)
-
-                        del d, r, get_datavalue, df0, _df, df0_filtered
+                        del d, r, get_data_value, df0, _df, df0_filtered
 
                     else:
                         self.logger.debug(f"_df is empty (1)")
@@ -884,13 +931,13 @@ class Engine:
         self.create_update_data_element_group(mode='update')
         for year in self.generate_years():
             duration = f"startDate={year}-01-01&endDate={year}-12-31"
-            data_value_url = f"{self.base_url}dataValueSets?dataSet={self.migration_dataset_id}&{duration}" \
+            data_value_url = f"{self.destination_base_url}dataValueSets?dataSet={self.migration_dataset_id}&{duration}" \
                              f"&dataElementGroup={self.data_element_group_id}" \
                              f"&orgUnitGroup={self.org_unit_group}"
             _df = None
             data_to_get = None
             try:
-                response = self.session.get(data_value_url, timeout=600)
+                response = self.destination_session.get(data_value_url, timeout=600)
                 data_to_get = json.loads(response.text)
                 response.close()
                 self.logger.debug(f"Data pull completed for ... {duration}")
@@ -928,7 +975,7 @@ class Engine:
                             self.logger.debug("======== data End Start ========")
                             params = {'importStrategy': 'DELETE'}
                             r = self.post_data(
-                                url=f"{self.base_url}dataValueSets", data=data, params=params
+                                url=f"{self.destination_base_url}dataValueSets", data=data, params=params
                             )
                             d = r.json()
                             r.close()
@@ -1011,7 +1058,7 @@ class FixErrors:
 
         for attribute_option_combo, org_units in grouped_data.items():
             print(f"Attribute Option Combo: {attribute_option_combo}, Org Units: {org_units}")
-            coc_data = self.engine.get_url_data(f"{self.engine.base_url}categoryOptionCombos/{attribute_option_combo}.json?fields=categoryOptions[id,name]")
+            coc_data = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/{attribute_option_combo}.json?fields=categoryOptions[id,name]")
             for option in coc_data['categoryOptions']:
                 if option['name'] == self.cat_option:
                     cat_option_data = self.engine.get_url_data(
@@ -1021,10 +1068,10 @@ class FixErrors:
                     print(cat_option_data['organisationUnits'])
                     co_data_structured = {"categoryOptions": [cat_option_data]}
                     params = {'importStrategy': 'UPDATE'}
-                    self.post_data(url=f"{self.engine.base_url}metadata", json=co_data_structured, params=params)
+                    self.post_data(url=f"{self.engine.destination_base_url}metadata", json=co_data_structured, params=params)
 
-    def post_data(self, url=None, json=None, data=None, params=None):
-        self.engine.post_data(url=url, json=json, data=data, params=params)
+    def post_data(self, url=None, json_=None, data_=None, params=None):
+        self.engine.post_data(url=url, json=json_, data=data_, params=params)
 
     def get_structured_data(self):
         return self.structured_data
@@ -1066,6 +1113,7 @@ class FixErrors:
         if row['Property'] == "orgUnit": # for OrgUnits
             self.group_data_org_units()
 
+
 class DataValueProcessing:
     def __init__(self, log=None):
         self.url = None
@@ -1104,6 +1152,7 @@ class DataValueProcessing:
         # return json_data #json_list
         return json_list  # json_list
 
+
 if __name__ == "__main__":
     # Get current date and time as a string including hours, minutes, and seconds
     # Define the file path
@@ -1122,14 +1171,16 @@ if __name__ == "__main__":
     processing_years = {
                             'dynamic_years': 10,
                             'specific_years': [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-                            'process_months': 'yes',
+                            'process_months': None,
                             'process_days': None
-                        }  # 'specific_years=None [2022]', #process_months=None [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+                        }  # 'specific_years=None [2022]', #process_months=None or yes,
     update_specific_coc__ = None
     # default is None  "These are specific CoCs to be processed"  ["rMtYKTzMGAW"]
 
-    SkipCategoryMaintenance = False  # default is False (False runs the COC configurations)
-    org_unit_group_ = 'TYLZ69uODNo'
+    process_category_combination_maintenance = False  # default is True (True runs the CC configurations)
+    process_data_values = True  # Migrate data Value after metadata functions
+
+    org_unit_group_ = 'DoVcSNLg5rm'
     connection_ = Connection(logger)
     gen = Engine(connection_, logger, org_unit_group=org_unit_group_,
                  datasource=df, posted_file_path=post_file_path,
@@ -1137,14 +1188,14 @@ if __name__ == "__main__":
     deletion = False
     maintenance = False  # default is False (False runs the COC configurations)
     specific_push = False
-    mode = 'import_export' #['creation', 'import_export']
+    mode = 'process_metadata_and_process_data_values' #['process_metadata_and_process_data_values', 'import_export_metadata']
     dataSetName = "Migration DataSet"  # "Migrating DataSet Default" #Migrating DataSet
     fix_errors = False  # default is False (False runs the COC configurations)
 
     if gen.ping_connections():
         if not maintenance:
             if not specific_push:
-                if mode == 'creation':
+                if mode == 'process_metadata_and_process_data_values':
                     unique_new_data_elements_name = df['Proposed new Data element Name'].unique()
                     all_unique_data_elements_ids_list = set(df['dataElement.id'])
                     index = 0
@@ -1171,6 +1222,7 @@ if __name__ == "__main__":
                         filter_obj = data_to_process_df_first_level[f'{min_unique_column}'].unique()
                         unique_data_elements_list = list(unique_data_elements)
                         category_combination_ = None
+                        old_category_combination_ = None
                         data_element_group_ = None
                         data_set_ = None
                         new_data_element_ = None
@@ -1186,6 +1238,7 @@ if __name__ == "__main__":
                                 data_to_process_df = gen.data_to_process(filter_, dataElement)
                                 if data_to_process_df is not None:
                                     category_combination_name = data_to_process_df.iloc[0]['Proposed CatCombos']
+                                    old_category_combination_ = data_to_process_df.iloc[0]['Current categoryCombo.id']
                                     if category_combination_name not in obj_checked:
                                         logger.debug(f"Processing {category_combination_name}")
                                         category_combination_ = gen.create_check_metadata(metadata='categoryCombos',
@@ -1225,7 +1278,8 @@ if __name__ == "__main__":
                                         }
                                     ]
 
-                                    dataElementName = f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}: Continuation'
+                                    dataElementName = f'{data_to_process_df.iloc[0]["Proposed new Data element Name"]}: ' \
+                                                      f'Continuation'
                                     if dataElementName not in obj_checked:
                                         logger.debug(f"Processing dataElement Name")
                                         new_data_element_ = gen.create_check_metadata(metadata='dataElements',
@@ -1249,13 +1303,19 @@ if __name__ == "__main__":
                                             )
                                     obj_checked.update([category_combination_name, "Data Migration Group", dataSetName,
                                                         dataElementName])
-                                gen.process_metadata(filter_,
-                                                           category_combination_,
-                                                           category_combination_name,
-                                                           new_data_element=new_data_element_,
-                                                           data_element_in_view=dataElement,
-                                                           update_specific_coc_=update_specific_coc__,
-                                                           skip_category_maintenance=SkipCategoryMaintenance)
+                                    gen.process_metadata(filter_item=filter_,
+                                                         co_id=category_combination_,
+                                                         old_cc_id=old_category_combination_,
+                                                         new_name=category_combination_name,
+                                                         new_data_element=new_data_element_,
+                                                         data_element_in_view=dataElement,
+                                                         update_specific_coc_=update_specific_coc__,
+                                                         process_category_combination_maintenance_=
+                                                         process_category_combination_maintenance,
+                                                         process_data_values_=process_data_values)
+                                if process_data_values is False:
+                                    break  # Exit the loop because data values are not processed
+
                             index = index + 1
                             percentage = (index / total_elements) * 100
                             logger.debug(
@@ -1267,17 +1327,21 @@ if __name__ == "__main__":
                     logger.debug(
                         f"Processing {index}/{total_cat_combos} 0% complete")
                     for category_combination_name in unique_cat_combos_names:
-                        category_combination_id = None
                         logger.debug(f"Processing {category_combination_name}")
-                        category_combination_id = gen.create_check_metadata(target_url=gen.source_base_url, metadata='categoryCombos',
+                        category_combination_id_ = gen.create_check_metadata(metadata='categoryCombos',
                                                                           mode='check',
                                                                           target_name=category_combination_name,
                                                                           json_obj={})
+                        if category_combination_id_ is None:
+                            category_combination_id_ = gen.create_check_metadata(metadata='categoryCombos',
+                                                                              mode='create',
+                                                                              target_name=category_combination_name,
+                                                                              json_obj={})
                         logger.debug(
-                            f"{category_combination_name} exists {category_combination_id} ")
-                        if category_combination_id is not None:
-                            logger.debug(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json")
-                            coc_data = gen.get_url_data(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json")
+                            f"{category_combination_name} exists {category_combination_id_} ")
+                        if category_combination_id_ is not None:
+                            logger.debug(f"{gen.source_base_url}categoryCombos/{category_combination_id_}.json")
+                            coc_data = gen.get_url_data(f"{gen.source_base_url}categoryCombos/{category_combination_id_}.json")
 
                             logger.debug(coc_data["id"])
 
@@ -1299,7 +1363,11 @@ if __name__ == "__main__":
                             logger.debug(f"{gen.destination_base_url}metadata")
                             logger.debug("States %s", json.dumps(response_update.status_code))
                             logger.debug("response %s", json.dumps(response_update.text))
-                            coc_data_update = gen.get_url_data(f"{gen.source_base_url}categoryCombos/{category_combination_id}.json?fields=categoryOptionCombos[id, name, displayShortName, displayName, displayFormName, categoryOptions, categoryCombo]")
+                            coc_data_update = gen.get_url_data(f"{gen.source_base_url}categoryCombos/"
+                                                               f"{category_combination_id_}.json?"
+                                                               f"fields=categoryOptionCombos[id, name, "
+                                                               f"displayShortName, displayName, "
+                                                               f"displayFormName, categoryOptions, categoryCombo]")
                             data_structured = {"categoryOptionCombos": coc_data_update["categoryOptionCombos"]}
                             data = gen.clean_up(str(data_structured))
                             response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data,
