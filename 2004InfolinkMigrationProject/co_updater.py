@@ -1014,13 +1014,13 @@ class Engine:
         self.error_data = []
 
 class FixErrors:
-    def __init__(self, cat_option="Associacao Beneficiente Crista (ABC) Angola", engine_class=None):
+    def __init__(self, engine_class=None):
 
         # Engine instance is passed in and can be used selectively
         self.engine = engine_class
         self.count = 6
         self.structured_data = []
-        self.cat_option = cat_option
+
 
     def structure_errors_data(self, org_unit=None, attribute_option_combo=None, category_option_combo=None, data_element=None,
                    error_code=None):
@@ -1043,35 +1043,75 @@ class FixErrors:
         if filtered_data:  # Only append if there's data left after filtering
             self.structured_data.append(filtered_data)
 
-    def group_data_org_units(self):
+    def resolve_errors(self):
         # Grouping the data by attribute_option_combo
-        grouped_data = {}
+        aoc_grouped_data = {}
 
-        for entry in self.structured_data:
-            attribute_combo = entry['attribute_option_combo']
-            org_unit = entry['org_unit']
+        # Extract unique items with 'attribute_option_combo' or category_option_combo and then make the list unique
+        attribute_combo_items = list({(item['org_unit'], item['attribute_option_combo']): item for item
+                                      in self.structured_data if "attribute_option_combo" in item}.values())
+        category_options_combo_items = list({(item['data_element'], item['category_option_combo']): item for item
+                                             in self.structured_data if "category_option_combo" in item}.values())
 
-            if attribute_combo not in grouped_data:
-                grouped_data[attribute_combo] = []  # Initialize a new list if key doesn't exist
+        print("attribute_combo_items: ", attribute_combo_items)
+        if len(attribute_combo_items) > 0:
+            for entry in attribute_combo_items:
+                attribute_combo = entry['attribute_option_combo']
+                org_unit = entry['org_unit']
 
-            grouped_data[attribute_combo].append(org_unit)  # Append the org_unit to the respective list
+                if attribute_combo not in aoc_grouped_data:
+                    aoc_grouped_data[attribute_combo] = []  # Initialize a new list if key doesn't exist
 
-        for attribute_option_combo, org_units in grouped_data.items():
-            print(f"Attribute Option Combo: {attribute_option_combo}, Org Units: {org_units}")
-            coc_data = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/{attribute_option_combo}.json?fields=categoryOptions[id,name]")
-            for option in coc_data['categoryOptions']:
-                if option['name'] == self.cat_option:
-                    cat_option_data = self.engine.get_url_data(
-                        f"{self.engine.base_url}categoryOptions/{option['id']}.json")
-                    for org_unit in org_units:
-                        cat_option_data['organisationUnits'].append({"id": org_unit})
-                    print(cat_option_data['organisationUnits'])
-                    co_data_structured = {"categoryOptions": [cat_option_data]}
-                    params = {'importStrategy': 'UPDATE'}
-                    self.post_data(url=f"{self.engine.destination_base_url}metadata", json=co_data_structured, params=params)
+                aoc_grouped_data[attribute_combo].append(org_unit)  # Append the org_unit to the respective list
 
-    def post_data(self, url=None, json_=None, data_=None, params=None):
-        self.engine.post_data(url=url, json=json_, data=data_, params=params)
+            for attribute_option_combo, org_units in aoc_grouped_data.items():
+                aoc_data_ = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/"
+                                                     f"{attribute_option_combo}.json?fields=categoryOptions[id,name]")
+                for option in aoc_data_['categoryOptions']:
+                    if option['name'] not in ["COP", "DSD"]:
+                        cat_option_data = self.engine.get_url_data(
+                            f"{self.engine.destination_base_url}categoryOptions/{option['id']}.json")
+                        for org_unit in org_units:
+                            cat_option_data['organisationUnits'].append({"id": org_unit})
+                        del cat_option_data["createdBy"], cat_option_data["lastUpdatedBy"]
+                        del cat_option_data["user"], cat_option_data["created"]
+                        del cat_option_data["lastUpdated"]
+                        del cat_option_data["href"]
+                        coc_data_structured_ = {"categoryOptions": [cat_option_data]}
+                        data_ = self.engine.clean_up(str(coc_data_structured_))
+                        print(coc_data_structured_)
+                        params = {'importStrategy': 'UPDATE'}
+                        response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
+                                                          data_=data_, params=params)
+                        logger.debug("Status %s", json.dumps(response_update_.status_code))
+                        logger.debug("Response %s", json.dumps(response_update_.text))
+
+        if len(category_options_combo_items) > 0:
+            _data = []
+            for entry in category_options_combo_items:
+                coc_data_ = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/"
+                                                     f"{entry['category_option_combo']}.json")
+                de_data_ = self.engine.get_url_data(
+                    f"{self.engine.destination_base_url}dataElements/{entry['data_element']}.json")
+                # print(de_data_["categoryCombo"])
+                coc_data_["categoryCombo"]["id"] = de_data_["categoryCombo"]["id"]
+                del coc_data_["lastUpdatedBy"]
+                del coc_data_["created"]
+                del coc_data_["lastUpdated"]
+                del coc_data_["href"]
+                _data.append(coc_data_)
+            coc_data_structured_ = {"categoryOptionCombos": _data}
+            data_ = self.engine.clean_up(str(coc_data_structured_))
+            print(data_)
+            params = {'importStrategy': 'UPDATE'}
+            response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
+                                              data_=data_, params=params)
+            logger.debug("Status %s", json.dumps(response_update_.status_code))
+            logger.debug("Response %s", json.dumps(response_update_.text))
+
+
+    def post_data(self, url=None, data_=None, params=None):
+        return self.engine.post_data(url=url, data=data_, params=params)
 
     def get_structured_data(self):
         return self.structured_data
@@ -1085,33 +1125,33 @@ class FixErrors:
             # Extract the relevant columns: 'Value', 'Error Code', 'Property'
             value = row['Value']
             error_code = row['Error Code']
-
             # Define regex patterns based on the type of error in the 'Value' column
             org_unit_pattern = r"Organisation unit: `([^`]+)` is not valid for attribute option combo: `([^`]+)`"
             category_combo_pattern = r"Category option combo: `([^`]+)` must be part of category combo of data element: `([^`]+)`"
 
-            # Extract information based on the property type
-            if row['Property'] == props:
+            if row['Property'] == "orgUnit":
                 # Match organisation unit and attribute option combo
                 org_unit_match = re.search(org_unit_pattern, value)
                 if org_unit_match:
                     org_unit = org_unit_match.group(1)
                     attribute_option_combo = org_unit_match.group(2)
                     # Call fix_errors for Organisation Unit
-                    self.structure_errors_data(org_unit=org_unit, attribute_option_combo=attribute_option_combo, error_code=error_code)
-
-            elif row['Property'] == props:
+                    self.structure_errors_data(org_unit=org_unit,
+                                               attribute_option_combo=attribute_option_combo,
+                                               error_code=error_code)
+            if row['Property'] == "categoryOptionCombo":
                 # Match category option combo and data element
                 category_combo_match = re.search(category_combo_pattern, value)
                 if category_combo_match:
                     category_option_combo = category_combo_match.group(1)
                     data_element = category_combo_match.group(2)
                     # Call fix_errors for Category Option Combo
-                    self.structure_errors_data(category_option_combo=category_option_combo, data_element=data_element,
-                               error_code=error_code)
-        print(self.get_structured_data())
-        if row['Property'] == "orgUnit": # for OrgUnits
-            self.group_data_org_units()
+                    self.structure_errors_data(category_option_combo=category_option_combo,
+                                               data_element=data_element,
+                                               error_code=error_code)
+
+        # unique_data = list({(item['category_option_combo'], item['data_element']): item for item in self.get_structured_data()}.values())
+        self.resolve_errors()
 
 
 class DataValueProcessing:
@@ -1174,11 +1214,11 @@ if __name__ == "__main__":
                             'process_months': None,
                             'process_days': None
                         }  # 'specific_years=None [2022]', #process_months=None or yes,
-    update_specific_coc__ = None
+    update_specific_coc__ = ["UWYwVkw9n11"] #None
     # default is None  "These are specific CoCs to be processed"  ["rMtYKTzMGAW"]
 
     process_category_combination_maintenance = False  # default is True (True runs the CC configurations)
-    process_data_values = True  # Migrate data Value after metadata functions
+    process_data_values = False  # Migrate data Value after metadata functions
 
     org_unit_group_ = 'DoVcSNLg5rm' # should be automated soon
     connection_ = Connection(logger)
@@ -1190,7 +1230,7 @@ if __name__ == "__main__":
     specific_push = False
     mode = 'process_metadata_and_process_data_values' #['process_metadata_and_process_data_values', 'import_export_metadata']
     dataSetName = "Migration DataSet"  # "Migrating DataSet Default" #Migrating DataSet
-    fix_errors = False  # default is False (False runs the COC configurations)
+    fix_errors = True  # default is False (False runs the COC configurations)
 
     if gen.ping_connections():
         if not maintenance:
@@ -1379,14 +1419,11 @@ if __name__ == "__main__":
                     percentage = (index / total_cat_combos) * 100
                     logger.debug(
                         f"Processed {index}/{total_cat_combos} {percentage:.2f}% complete")
-
-
         else:
             if deletion:
                 gen.delete_datavalues(data_element_in_view_to_delete="")
             if fix_errors:
-                fix_errors_ = FixErrors(cat_option="Health Facility",
-                                        engine_class=gen)  # Pass it to FixErrors
-                fix_errors_.extract_metadata(props='orgUnit')  # can be props='orgUnit' or props='categoryOptionCombo'
+                fix_errors_ = FixErrors(engine_class=gen)  # Pass it to FixErrors
+                fix_errors_.extract_metadata()
         today_date_time = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
         logger.debug(f"finished processing at {today_date_time}")

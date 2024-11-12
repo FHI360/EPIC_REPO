@@ -6,3 +6,4 @@ BeforeRepoCreated/
 *.DS_Store
 *.idea
 */logs/*
+*.txt
