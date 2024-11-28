@@ -2,3 +2,9 @@ BeforeRepoCreated/
 */config.json
 *.csv
 *.xlsx
+*.aes
+*.DS_Store
+*.idea
+*/logs/*
+*.txt
+*.json
