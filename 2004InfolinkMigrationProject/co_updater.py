@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*-
 import sys
 
 import pandas as pd
@@ -13,6 +14,7 @@ import numpy as np
 import re
 import pickle
 import pyAesCrypt
+import unicodedata
 import getpass
 import maskpass  # importing maskpass library
 
@@ -92,7 +94,7 @@ class Connection:
                 "source": [dhis_source_username, dhis_source_password, source_target_url],
                 "destination": [dhis_destination_username, dhis_destination_password, destination_target_url]
             }
-            print(credentials)
+            # print(credentials)
             with open(self.dhis_file, "wb") as cred_file:
                 pickle.dump(credentials, cred_file)
 
@@ -141,7 +143,7 @@ class Connection:
             base_url = self.source_base_url if connection_type == "source" else self.destination_base_url
             base_url = base_url.replace("://", "TEMP_PLACEHOLDER").replace("//", "/").replace("TEMP_PLACEHOLDER", "://")
             #base_url = re.sub(r"//29.*?/system", "/system", base_url)
-            print(base_url)
+            # print(base_url)
             try:
                 r = session.get(f'{base_url}system/ping', timeout=self.timeout)
                 r.raise_for_status()  # Raise an error for bad responses
@@ -304,7 +306,7 @@ class Engine:
                             #     json.dump(co_data_structured, json_file)
                             #
                             params = {'importStrategy': 'UPDATE'}
-                            response_update = self.post_data(url=f"{self.destination_base_url}metadata", json=co_data_structured, params=params)
+                            response_update = self.post_data(url=f"{self.destination_base_url}metadata", json_=co_data_structured, params=params)
                             self.logger.debug('++ Pushing category and COC data ++')
                             self.logger.debug("Status code: %s", json.dumps(response_update.status_code))
                             self.logger.debug("Response update: %s", json.dumps(response_update.text))
@@ -427,10 +429,10 @@ class Engine:
                 }
                 self.new_data_element = uid
             data_structured_ = {f"{metadata}": [metadata_data]}
-            data_ = Engine.clean_up(str(data_structured_))
-            self.logger.debug("data_structured: ", data_)
+            data__ = Engine.clean_up(str(data_structured_))
+            # self.logger.debug("data_structured: ", data__)
             params = {'importStrategy': 'CREATE_UPDATE'}
-            response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data_, params=params)
+            response_update_ = self.post_data(url=f"{self.destination_base_url}metadata", data=data__, params=params)
             self.logger.debug(f'++ Updating or creating {metadata} ++')
 
             # Assuming the response JSON is stored in a variable called response_update
@@ -539,17 +541,36 @@ class Engine:
             uid = self.data_to_process_df.loc[processed_index, col]  # Access the value in the first row
             if pd.notna(uid):  # Check if the value is not NaN
                 cat_option_combo.append({"id": co_id})
-        coc_data = self.get_url_data(f"{self.source_base_url}categoryOptionCombos/{uid}.json", connection="source")
-        coc_data["categoryCombo"] = cat_option_combo[0]
-        return coc_data  # Optionally, return the 'cat' list if needed elsewhere
+        coc_data_ = self.get_url_data(f"{self.source_base_url}categoryOptionCombos/{uid}.json", connection="source")
+        coc_data_["categoryCombo"] = cat_option_combo[0]
+        return coc_data_  # Optionally, return the 'cat' list if needed elsewhere
 
-    def get_url_data(self, url, connection="source"):
+    @staticmethod
+    def update_coc_name(coc_data_update_, df_coc):
+        # Create a mapping dictionary from the DataFrame
+        update_mapping = dict(
+            zip(df_coc["categoryOptionCombos.id"], df_coc["updated name for Coc update"]))
+        # Update the JSON data
+        for combo in coc_data_update_:
+            combo_id = combo["id"]  # Extract the id
+            if combo_id in update_mapping:
+                name_ = update_mapping[combo_id]
+                if isinstance(name_, str):
+                    name_ = name_.encode('utf-8').decode('utf-8')  # Ensure it's properly encoded
+                # Update the 'name, displayName and displayFormName' fields
+                combo["name"] = name_
+                combo["displayName"] = name_
+                combo["displayFormName"] = name_
+        return coc_data_update_
+
+    def get_url_data(self, url, connection="source", session=None):
         # Select the appropriate session based on destination
-        session = self.destination_session if connection == "destination" else self.source_session
+        if session is None:
+            session = self.destination_session if connection == "destination" else self.source_session
         try:
             response = session.get(url, timeout=self.timeout)
-            data_ = json.loads(response.text)
-            return data_
+            get_data_ = json.loads(response.text)
+            return get_data_
         except json.JSONDecodeError as e:
             self.logger.debug(f"Failed to parse JSON from response: {e}")
             return {}  # Return empty dictionary instead of None
@@ -562,8 +583,8 @@ class Engine:
             self.logger.debug(f"Unexpected error at {failure_today_date_time}: {e}")
             return {}  # Return empty dictionary instead of None
 
-    def post_data(self, url=None, json=None, data=None, params=None,
-                                                headers={'content-type': 'application/json'}, connection="destination"):
+    def post_data(self, url=None, json_=None, data=None, params=None,
+                                                headers={"Content-Type": "application/json; charset=utf-8"}, connection="destination", data_structured_=None):
 
         # Ensure the URL is provided
         if url is None:
@@ -574,9 +595,14 @@ class Engine:
 
         # Choose to send data or json
         if data is not None:
-            response_update_ = session.post(url=url, data=data, params=params, headers=headers)
-        elif json is not None:
-            response_update_ = session.post(url=url, json=json, params=params, headers=headers)
+            try:
+                response_update_ = session.post(url=url, data=data, params=params,
+                                                headers=headers)
+            except Exception as e:
+                response_update_ = session.post(url=url, json=data_structured_, params=params, headers=headers)
+
+        elif json_ is not None:
+            response_update_ = session.post(url=url, json=json_, params=params, headers=headers)
         else:
             raise ValueError("Either 'data' or 'json' must be provided.")
 
@@ -614,6 +640,9 @@ class Engine:
 
     def set_filter_column(self, min_unique_column_to_filter):
         self.min_unique_column_to_filter = min_unique_column_to_filter
+
+    def set_df(self, df_):
+        self.df_main = df_
 
     def create_update_data_element_group(self, mode):
         if mode == 'update':
@@ -813,6 +842,7 @@ class Engine:
                         batch_size = 500
 
                         # Split the DataFrame into chunks of 1000 rows each
+                        retries_message = "Normal Post"
                         df_batches = np.array_split(after_filter_df, len(after_filter_df) // batch_size + 1)
                         for i, df_batch in enumerate(df_batches):
                             self.logger.debug(f"*** Processing batch {i + 1} of {len(df_batches)} ***")
@@ -833,59 +863,72 @@ class Engine:
                             # Convert the current batch to JSON
                             converted_to_json = self.DataValueProcessing.get_datavalue(filter_df_batch)
 
-                            # converted_to_json = DataValueProcessing.get_datavalue(after_filter_df)
-                            get_data_value = {"dataValues": converted_to_json}
-                            data_ = Engine.clean_up(str(get_data_value))
-                            self.logger.debug("*** data cleaned ***")
-                            # self.logger.debug("======== data Before Start ========")
-                            # self.logger.debug(data)
-                            # self.logger.debug("======== data End Start ========")
-                            r = self.post_data(
-                                url=f"{self.destination_base_url}dataValueSets", data=data_
-                            )
-                            d = r.json()
-                            # Extract conflicts object directly
-                            conflicts = d.get('conflicts', [])
+                            # Function to post data with retry logic
+                            def push_data(max_retries=2):
+                                for attempt in range(1, max_retries + 1):
+                                    self.logger.debug(f"Attempt {attempt} of {max_retries} to post data.")
 
-                            # Loop through each conflict and print required fields
-                            # Prepare data for DataFrame
-                            if len(conflicts)>0:
+                                    get_data_value = {"dataValues": converted_to_json}
+                                    data__ = Engine.clean_up(str(get_data_value))
+                                    self.logger.debug("*** Data cleaned ***")
 
-                                for conflict in conflicts:
-                                    start_date_ = start_date
-                                    end_date_ = end_date
-                                    value = conflict.get('value')
-                                    error_code = conflict.get('errorCode')
-                                    prop = conflict.get('property')
+                                    # Post data
+                                    r = self.post_data(url=f"{self.destination_base_url}dataValueSets", data=data__)
+                                    d = r.json()
+                                    conflicts = d.get('conflicts', [])
 
-                                    self.logger.debug(f"Value: {value}")
-                                    self.logger.debug(f"Error Code: {error_code}")
-                                    self.logger.debug(f"Property: {prop}")
-                                    self.logger.debug("---")
-                                    self.error_data.append([start_date_, end_date_, value, error_code, prop])
-                                # Convert data to a DataFrame
-                                self.error_data_saving()
-                            r.close()
-                            log_message = f"old DE {self.data_element_in_view} - new DE {self.new_data_element}- \n " \
-                                          f"Data posted... for &startDate={start_date}&endDate={end_date} \n posting-{d} \n\n\n"
-                            self.logger.debug(log_message)
-                            # del get_datavalue, df0, _df, df0_filtered
-                            # Step 3: Append the same message to the file
-                            with open(self.posted_file_path, 'a') as file:
-                                file.write(log_message)
-                        del d, r, get_data_value, df0, _df, df0_filtered
+                                    # If conflicts are found, handle and retry
+                                    if conflicts:
+                                        for conflict in conflicts:
+                                            start_date_ = start_date
+                                            end_date_ = end_date
+                                            value = conflict.get('value')
+                                            error_code = conflict.get('errorCode')
+                                            prop = conflict.get('property')
+
+                                            self.logger.debug(f"Value: {value}")
+                                            self.logger.debug(f"Error Code: {error_code}")
+                                            self.logger.debug(f"Property: {prop}")
+                                            self.logger.debug("---")
+
+                                            self.error_data.append([
+                                                self.data_element_in_view, start_date_, end_date_, value, error_code,
+                                                prop
+                                            ])
+
+                                        self.error_data_saving()
+                                        fix_errors__ = FixErrors(engine_class=self)
+                                        fix_errors__.extract_metadata(triggered='Automatically')
+                                    else:
+                                        # If no conflicts, log and return
+                                        log_message = f"Data posted successfully for batch {i + 1}"
+                                        self.logger.debug(log_message)
+                                        with open(self.posted_file_path, 'a') as file:
+                                            file.write(log_message + "\n")
+                                        r.close()
+                                        del d, r, get_data_value
+                                        return True  # Success
+
+                                    r.close()
+                                    del d, r, get_data_value
+                                self.logger.debug(
+                                    f"Max retries reached for batch {i + 1}. Conflicts remain unresolved.")
+                                return False  # Failure after retries
+                            push_data()
+                        del df0, _df, df0_filtered
 
                     else:
                         self.logger.debug(f"_df is empty (1)")
-                        pass
+                        return True
                 except Exception as e:
                     self.logger.debug(f"_df is empty (2) {e}")
+                    return True
             else:
                 self.logger.debug(f"_df is empty (3)")
-                pass
+                return True
         else:
             self.logger.debug(f" _df is empty")
-            pass
+            return True
 
     @staticmethod
     def clean_up(clean):
@@ -998,7 +1041,8 @@ class Engine:
 
     def error_data_saving(self):
         try:
-            error_data_df = pd.DataFrame(self.error_data, columns=['Start Date', 'End Date', 'Value', 'Error Code', 'Property'])
+            error_data_df = pd.DataFrame(self.error_data, columns=['DataElement', 'Start Date', 'End Date', 'Value',
+                                                                   'Error Code', 'Property'])
 
             # Check if file exists
             if not os.path.exists(self.err_file_path):
@@ -1050,10 +1094,101 @@ class FixErrors:
         # Extract unique items with 'attribute_option_combo' or category_option_combo and then make the list unique
         attribute_combo_items = list({(item['org_unit'], item['attribute_option_combo']): item for item
                                       in self.structured_data if "attribute_option_combo" in item}.values())
+        print("attribute_combo_items: ", attribute_combo_items)
         category_options_combo_items = list({(item['data_element'], item['category_option_combo']): item for item
                                              in self.structured_data if "category_option_combo" in item}.values())
+        print("category_options_combo_items: ", category_options_combo_items)
+        # List of dataElement IDs
+        self_test_data_element_and_coc_ids = [
+            "BXaeeRcNC1w",
+            "GlfMR8YUlsQ",
+            "SENLBIzJJi8",
+            "ns4Ckbq5FvQ",
+            "jLrgY7klJdM",
+            "WL1H0ysVO8m",
+            "xEVxb6wy4ky",
+            "EJxre1x0VgD",
+            "ZFPaJ7pQ0Fl",
+            "xqpn4UoFXOG",
+            "MByYBLdGmqS",
+            "LYsAcDNybjW",
+            "B27oFNJWjYS",
+            "w58CMjcedn3",
+            "Cn3JXp4vNyG",
+            "HTS_SELF: Continuation",
+            "HTS_SELF_CONFIRMED: Continuation",
+            "HTS_SELF_LINKED: Continuation",
+            "HTS_SELF_REACTIVE: Continuation",
+            "HTS_SELF_USED: Continuation"
+        ]
 
-        print("attribute_combo_items: ", attribute_combo_items)
+        if len(category_options_combo_items) > 0:
+            _data = []
+            dev_session = rq.Session()  # Consider using a session for connection reuse
+            dev_session.auth = ('aejakhegbe', '%Wekgc7345dgfgfq#')
+            dev_url = 'https://infolink-dev.baosystems.com/api/29/'
+            n = 0
+            for entry in category_options_combo_items:
+                print(f"Processing category_options_combo_items index {n}")
+                if entry['data_element'] not in self_test_data_element_and_coc_ids:
+                    coc_data_ = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/"
+                                                         f"{entry['category_option_combo']}.json")
+                    de_data_ = self.engine.get_url_data(
+                        f"{self.engine.destination_base_url}dataElements/{entry['data_element']}.json")
+                    # Load the JSON string into a Python dictionary
+                    de_data_json = json.loads(json.dumps(de_data_))
+
+                    # Access the httpStatusCode
+                    http_status_code = de_data_json['httpStatusCode']
+                    if http_status_code == 404:
+
+                        # print("Pulling   - HTTP Status Code:", http_status_code)
+
+                        de_data_ = self.engine.get_url_data(
+                            f"{dev_url}dataElements/{entry['data_element']}.json",
+                            session=dev_session)
+                        # data_structured_ = {f"dataElements": [de_data_]}
+                        # data__ = Engine.clean_up(str(data_structured_))
+                        # logger.debug("data_structured: ", data__)
+                        # params = {'importStrategy': 'CREATE_UPDATE'}
+                        # create_de_response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
+                        #                                             data_=data__, params=params)
+                        # logger.debug("Status %s", json.dumps(create_de_response_update_.status_code))
+                        # logger.debug("Response %s", json.dumps(create_de_response_update_.text))
+                        # logger.debug(f'++ Updating or creating Data Element {de_data_["name"]} ++')
+                    if de_data_['name'] not in self_test_data_element_and_coc_ids:
+                        if de_data_["categoryCombo"]["id"] not in self_test_data_element_and_coc_ids:
+                            try:
+                                logger.debug(f"Processing for data element {de_data_['id']} - {de_data_['name']}")
+                                coc_data_["categoryCombo"]["id"] = de_data_["categoryCombo"]["id"]
+
+                                del coc_data_["lastUpdatedBy"]
+                                del coc_data_["created"]
+                                del coc_data_["lastUpdated"]
+                                del coc_data_["href"]
+                                _data.append(coc_data_)
+                            except Exception as e:
+                                logger.debug(f"Error for data element {de_data_}")
+                                logger.debug(e)
+                    n = n + 1
+            # Use a set to track unique IDs and filter duplicates
+            unique_ids = set()
+            unique_combos = []
+
+            for combo in _data:
+                if combo['id'] not in unique_ids:
+                    unique_ids.add(combo['id'])
+                    unique_combos.append(combo)
+            coc_data_structured_ = {"categoryOptionCombos": unique_combos}
+            category_option_combos_data_ = self.engine.clean_up(str(coc_data_structured_))
+            print(category_option_combos_data_)
+            params = {'importStrategy': 'UPDATE'}
+            category_option_combos_response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
+                                                                     data_=category_option_combos_data_, params=params)
+            logger.debug("Status %s", json.dumps(category_option_combos_response_update_.status_code))
+            logger.debug("Response %s", json.dumps(category_option_combos_response_update_.text))
+
+        # print("attribute_combo_items: ", attribute_combo_items)
         if len(attribute_combo_items) > 0:
             for entry in attribute_combo_items:
                 attribute_combo = entry['attribute_option_combo']
@@ -1077,51 +1212,109 @@ class FixErrors:
                         del cat_option_data["user"], cat_option_data["created"]
                         del cat_option_data["lastUpdated"]
                         del cat_option_data["href"]
+                        # print(cat_option_data)
+                        # cat_option_data["startDate"] = FixErrors.correct_date_format(cat_option_data["startDate"])
                         coc_data_structured_ = {"categoryOptions": [cat_option_data]}
-                        data_ = self.engine.clean_up(str(coc_data_structured_))
-                        print(coc_data_structured_)
+                        corrected_data_ = self.engine.clean_up(str(coc_data_structured_))
+                        # print(coc_data_structured_)
                         params = {'importStrategy': 'UPDATE'}
-                        response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
-                                                          data_=data_, params=params)
-                        logger.debug("Status %s", json.dumps(response_update_.status_code))
-                        logger.debug("Response %s", json.dumps(response_update_.text))
+                        response_update_category_options = self.post_data(url=f"{self.engine.destination_base_url}metadata",
+                                                                          data_=corrected_data_, params=params,
+                                                                          data_structured_=coc_data_structured_)
+                        if json.dumps(response_update_category_options.status_code) == "200":
+                            logger.debug("Status %s", json.dumps(response_update_category_options.status_code))
+                            logger.debug("Response %s", json.dumps(response_update_category_options.text))
+                        else:
+                            # Check if 'startDate' exists
+                            if "startDate" in cat_option_data:
+                                cat_option_data["startDate"] = FixErrors.correct_date_format(cat_option_data["startDate"])
+                            else:
+                                print("startDate does not exist.")
 
-        if len(category_options_combo_items) > 0:
-            _data = []
-            for entry in category_options_combo_items:
-                coc_data_ = self.engine.get_url_data(f"{self.engine.destination_base_url}categoryOptionCombos/"
-                                                     f"{entry['category_option_combo']}.json")
-                de_data_ = self.engine.get_url_data(
-                    f"{self.engine.destination_base_url}dataElements/{entry['data_element']}.json")
-                # print(de_data_["categoryCombo"])
-                coc_data_["categoryCombo"]["id"] = de_data_["categoryCombo"]["id"]
-                del coc_data_["lastUpdatedBy"]
-                del coc_data_["created"]
-                del coc_data_["lastUpdated"]
-                del coc_data_["href"]
-                _data.append(coc_data_)
-            coc_data_structured_ = {"categoryOptionCombos": _data}
-            data_ = self.engine.clean_up(str(coc_data_structured_))
-            print(data_)
-            params = {'importStrategy': 'UPDATE'}
-            response_update_ = self.post_data(url=f"{self.engine.destination_base_url}metadata",
-                                              data_=data_, params=params)
-            logger.debug("Status %s", json.dumps(response_update_.status_code))
-            logger.debug("Response %s", json.dumps(response_update_.text))
+                            if "endDate" in cat_option_data:
+                                cat_option_data["endDate"] = FixErrors.correct_date_format(
+                                    cat_option_data["endDate"])
+                            new_name_ = FixErrors.clean_utf8_string(cat_option_data['name'])
+                            # Collect problematic entries
+                            error_data = []
 
+                            error_data.append([
+                                cat_option_data['name'],
+                                cat_option_data['id'],
+                                new_name_  # Placeholder if you want to suggest a corrected name
+                            ])
+                            #
+                            # # Check if file exists
+                            error_names_df = pd.DataFrame(error_data, columns=['name', 'id', 'New Name'])
+                            if not os.path.exists("Changed Options Names.csv"):
+                                # If file does not exist, write header
+                                error_names_df.to_csv("Changed Options Names.csv", index=False)
+                            else:
+                                # If file exists, append without writing the header again
+                                error_names_df.to_csv("Changed Options Names.csv", mode='a', index=False, header=False)
 
-    def post_data(self, url=None, data_=None, params=None):
-        return self.engine.post_data(url=url, data=data_, params=params)
+                            cat_option_data["name"] = new_name_
+                            cat_option_data["displayName"] = new_name_
+                            cat_option_data["displayFormName"] = new_name_
+                            cat_option_data["displayShortName"] = new_name_
+                            cat_option_data["shortName"] = FixErrors.enforce_shortname_limit(new_name_)
+                            coc_data_structured_ = {"categoryOptions": [cat_option_data]}
+                            corrected_data_ = self.engine.clean_up(str(coc_data_structured_))
+                            print(json.dumps(coc_data_structured_))
+                            params = {'importStrategy': 'UPDATE'}
+                            response_update_category_options = self.post_data(
+                                url=f"{self.engine.destination_base_url}metadata",
+                                data_=corrected_data_, params=params, data_structured_=coc_data_structured_)
+                            logger.debug("Status Again %s", json.dumps(response_update_category_options.status_code))
+                            logger.debug("Response Again %s", json.dumps(response_update_category_options.text))
+
+    def post_data(self, url=None, data_=None, params=None, data_structured_=None):
+        return self.engine.post_data(url=url, data=data_, params=params, data_structured_=data_structured_)
+
+    # Function to correct the date format
+    @staticmethod
+    def correct_date_format(date_str):
+        return date_str.split('T')[0]  # Extracts only the date part
+
+    @staticmethod
+    def clean_utf8_string(text):
+        # Normalize the string (NFC normal form)
+        # # Normalize to NFKD form, remove non-ASCII characters
+        # normalized_text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+        # # Remove any extra spaces created during normalization
+        # return re.sub(r'\s+', ' ', normalized_text).strip()
+
+        # Normalize to NFKD form to decompose special characters (é -> e)
+        normalized_text = unicodedata.normalize('NFKD', text)
+
+        # Remove all non-alphanumeric characters except spaces, hyphens, and parentheses
+        cleaned_text = re.sub(r'[^\w\s\-\(\)]', '', normalized_text)
+        # Remove any extra spaces created during normalization
+        return re.sub(r'\s+', ' ', cleaned_text).strip()
+
+    # Function to ensure 'shortName' is at most 50 characters
+    @staticmethod
+    def enforce_shortname_limit(short_name):
+        if len(short_name) > 50:
+            # Truncate and optionally ensure no word is split
+            return short_name[:50].rsplit(' ', 1)[0].strip()  # Truncate to 50 chars, avoid breaking the last word
+        return short_name
 
     def get_structured_data(self):
         return self.structured_data
 
-    def extract_metadata(self, props='orgUnit'):
+    def extract_metadata(self, triggered='Manually'):
         # Load the CSV file
+        logger.debug(f"Resolving conflict started: triggered {triggered}")
         file_path = 'conflicts_data.csv'  # Replace with your actual file path
-        data = pd.read_csv(file_path)
+        error_data_ = pd.read_csv(file_path, encoding='utf-8', low_memory=False)
+        del error_data_["Start Date"]
+        del error_data_["End Date"]
+        # Keep only unique rows based on 'Value', 'Error Code', and 'Property'
+        error_data_unique = error_data_.drop_duplicates(subset=["Value", "Error Code", "Property"])
+        logger.debug(f"Unique records in {file_path}  - length => {len(error_data_unique)}")
         # Iterate through each row of the CSV
-        for index, row in data.iterrows():
+        for index_, row in error_data_unique.iterrows():
             # Extract the relevant columns: 'Value', 'Error Code', 'Property'
             value = row['Value']
             error_code = row['Error Code']
@@ -1206,24 +1399,28 @@ if __name__ == "__main__":
     logger = log_formatter.config()
     today_date_time = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
     logger.debug(f"Started at {today_date_time}")
-    df = pd.read_excel("dataelement_source.xlsx", sheet_name=0)
+    # List of sheet names to read
+    # sheets_to_read = ["updated CatCombos"]
+    # data_source_main = pd.read_excel("Data element by dataset and metadata.xlsx", sheet_name=sheets_to_read)
+    # List of sheet names to read
+
+    # df2 = pd.read_csv('Get COC_uid alongside COC_name.csv', encoding="ISO-8859-1")
+
     # Dynamic generation
     processing_years = {
                             'dynamic_years': 10,
                             'specific_years': [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
                             'process_months': None,
                             'process_days': None
-                        }  # 'specific_years=None [2022]', #process_months=None or yes,
-    update_specific_coc__ = ["UWYwVkw9n11"] #None
+                        }  # 'specific_years=None [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]', #process_months=None or yes,
+    update_specific_coc__ = None #["UWYwVkw9n11"] #None
     # default is None  "These are specific CoCs to be processed"  ["rMtYKTzMGAW"]
-
     process_category_combination_maintenance = False  # default is True (True runs the CC configurations)
-    process_data_values = False  # Migrate data Value after metadata functions
-
+    process_data_values = True  # Migrate data Value after metadata functions
     org_unit_group_ = 'DoVcSNLg5rm' # should be automated soon
     connection_ = Connection(logger)
     gen = Engine(connection_, logger, org_unit_group=org_unit_group_,
-                 datasource=df, posted_file_path=post_file_path,
+                 posted_file_path=post_file_path,
                  years=processing_years)
     deletion = False
     maintenance = False  # default is False (False runs the COC configurations)
@@ -1234,6 +1431,8 @@ if __name__ == "__main__":
 
     if gen.ping_connections():
         if not maintenance:
+            df = pd.read_csv('updated CatCombos.csv', low_memory=False)
+            gen.set_df(df)
             if not specific_push:
                 if mode == 'process_metadata_and_process_data_values':
                     unique_new_data_elements_name = df['Proposed new Data element Name'].unique()
@@ -1361,6 +1560,7 @@ if __name__ == "__main__":
                             logger.debug(
                                 f"Processed {index}/{total_elements} now at - {dataElement}: {percentage:.2f}% complete")
                 else:
+                    df_coc_ = pd.read_csv('Update CoCs.csv', encoding='utf-8', low_memory=False)
                     unique_cat_combos_names = df['Proposed CatCombos'].unique()
                     index = 0
                     total_cat_combos = len(unique_cat_combos_names)
@@ -1396,25 +1596,38 @@ if __name__ == "__main__":
                             #coc_data["shortName"] = category_combination_id
 
                             data_structured = {"categoryCombos": [coc_data]}
-                            data = gen.clean_up(str(data_structured))
-                            response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data, params={'importStrategy': 'CREATE_AND_UPDATE'})
-                            logger.debug(coc_data)
+                            data_ = gen.clean_up(str(data_structured))
+                            response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data_, params={'importStrategy': 'CREATE_AND_UPDATE'})
+                            # logger.debug(coc_data)
                             logger.debug('++ Updating CategoryCombo ++ ')
                             logger.debug(f"{gen.destination_base_url}metadata")
-                            logger.debug("States %s", json.dumps(response_update.status_code))
-                            logger.debug("response %s", json.dumps(response_update.text))
+                            logger.debug("Status %s", json.dumps(response_update.status_code))
+                            # logger.debug("response %s", json.dumps(response_update.text))
                             coc_data_update = gen.get_url_data(f"{gen.source_base_url}categoryCombos/"
                                                                f"{category_combination_id_}.json?"
                                                                f"fields=categoryOptionCombos[id, name, "
                                                                f"displayShortName, displayName, "
                                                                f"displayFormName, categoryOptions, categoryCombo]")
-                            data_structured = {"categoryOptionCombos": coc_data_update["categoryOptionCombos"]}
+                            renamed_cat_options_combos = gen.update_coc_name(coc_data_update["categoryOptionCombos"],
+                                                                             df_coc_)
+                            data_structured = {"categoryOptionCombos": renamed_cat_options_combos}
+                            payload = json.dumps(data_structured, ensure_ascii=False).encode('utf-8')
                             data = gen.clean_up(str(data_structured))
-                            response_update = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data,
-                                                            params={'importStrategy': 'CREATE_AND_UPDATE'})
-                            logger.debug(data_structured)
-                            logger.debug("States %s", json.dumps(response_update.status_code))
-                            logger.debug("response %s", json.dumps(response_update.text))
+                            # print(data)
+                            response_update_ = gen.post_data(url=f"{gen.destination_base_url}metadata", data=data,
+                                                            params={'importStrategy': 'CREATE_AND_UPDATE'},
+                                                            data_structured_=data_structured)
+                            response_data_ = response_update_.json()  # Convert response to JSON
+                            ignored_value_ = response_data_['stats']['ignored']
+                            if ignored_value_ != 0:
+                                error_reports = response_data_['typeReports'][0]['objectReports'][0]['errorReports']
+                                logger.debug(f"ignored_value - {category_combination_name}")
+                                with open("problematics CoCs.txt", 'a') as file:
+                                    file.write(f"{category_combination_name} - {error_reports}\n\n")
+                            print(json.dumps(data_structured))
+                            # logger.debug(data_structured)
+                            logger.debug("Status %s", json.dumps(response_update_.status_code))
+                            logger.debug("response %s", json.dumps(response_update_.text))
                             index = index + 1
                     percentage = (index / total_cat_combos) * 100
                     logger.debug(
