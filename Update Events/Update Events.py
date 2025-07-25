@@ -189,7 +189,7 @@ def main():
             filters = config.get('filters', [])
             new_data_elements = config.get('data_elements', [])
             filtered_events = process_events_with_filters(events, filters, new_data_elements)
-            responses = post_all_events(processed_events, post_url, config['dhis_uname'], config['dhis_pwd'])
+            responses = post_all_events(filtered_events, post_url, config['dhis_uname'], config['dhis_pwd'])
             logging.info("Finished posting events.")
 
 if __name__ == "__main__":
